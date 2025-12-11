@@ -6,13 +6,13 @@ services:
     container_name: voice-backend
     image: voice-backend:latest
     restart: always
-    ports:
-      - "80:3000"
+    expose:
+      - "3000"
     env_file:
       - .env
     networks:
       - voice-net  
-      
+
   nginx:
     image: nginx:latest
     container_name: voice-nginx
@@ -24,16 +24,20 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    depends_on:
+      - app
     networks:
       - voice-net
 
-certbot:
-  image: certbot/certbot
-  container_name: voice-certbot
-  command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email YOUR_EMAIL --agree-tos --non-interactive
-  volumes:
-    - ./nginx/ssl:/etc/letsencrypt
-    - ./frontend:/var/www/frontend
+  certbot:
+    image: certbot/certbot
+    container_name: voice-certbot
+    command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email YOUR_EMAIL --agree-tos --non-interactive
+    volumes:
+      - ./nginx/ssl:/etc/letsencrypt
+      - ./frontend:/var/www/frontend
+    networks:
+      - voice-net
 
 networks:
   voice-net:
