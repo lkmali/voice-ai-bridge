@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.serverless
+.history
+package-lock.json
+.esbuild/
+yarn-error.log
+yarn.lock
