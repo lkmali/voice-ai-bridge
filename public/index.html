@@ -102,11 +102,11 @@
             let micOn = false;
             let playQueue = [];
             let playing = false;
-            let playCtx = null; // <-- needed for playback
+            let playCtx = null;
             let assistantDraft = "";
             let userPartial = "";
-            let state = "idle"; // "listening" | "thinking" | "speaking"
-            let audioChunks = 0; // track if we actually sent any audio
+            let state = "idle";
+            let audioChunks = 0;
 
             /* DOM */
             const micButton = document.getElementById("micButton");
@@ -114,12 +114,17 @@
             const chatEl = document.getElementById("chat");
             const typingEl = document.getElementById("typing");
 
-            /* WebSocket */
+            /* -------------------------
+       CONNECT WS → /exotel-media
+       ------------------------- */
             function connectWS() {
                 if (ws && ws.readyState === 1) 
                     return;
                 
-                const u = 'wss://d0be302a625d.ngrok-free.app/exotel-media'
+                const u = (
+                    location.protocol === "https:"
+                    ? "wss:"
+                    : "ws:") + "//" + location.host + "/exotel-media"; // <-- FIXED PATH ONLY
 
                 ws = new WebSocket(u);
 
@@ -130,19 +135,19 @@
             }
             connectWS();
 
-            /* State + UI */
+            /* STATE + UI */
             function setStatus(txt) {
                 statusEl.textContent = txt;
             }
 
-            function setMicState(newState) {
-                state = newState;
-                micButton.className = newState;
-                if (newState === "listening") 
+            function setMicState(s) {
+                state = s;
+                micButton.className = s;
+                if (s === "listening") 
                     micButton.textContent = "🎙 Listening...";
-                if (newState === "thinking") 
+                if (s === "thinking") 
                     micButton.textContent = "🤔 Thinking...";
-                if (newState === "speaking") 
+                if (s === "speaking") 
                     micButton.textContent = "🗣 Speaking...";
                 }
             
@@ -155,7 +160,9 @@
                 chatEl.scrollTop = chatEl.scrollHeight;
             }
 
-            /* Audio mic */
+            /* -------------------------
+       MICROPHONE STREAMING
+       ------------------------- */
             async function toggleMic() {
                 if (!micOn) 
                     startMic();
@@ -174,7 +181,9 @@
                 mediaStream = await navigator
                     .mediaDevices
                     .getUserMedia({audio: true});
+
                 audioCtx = new AudioContext({sampleRate: 24000});
+
                 const src = audioCtx.createMediaStreamSource(mediaStream);
                 scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
 
@@ -188,6 +197,7 @@
                         .inputBuffer
                         .getChannelData(0);
                     const pcm = floatToPCM(input);
+
                     ws.send(JSON.stringify({type: "audio", audio: pcmBase64(pcm)}));
                     audioChunks++;
                 };
@@ -197,6 +207,7 @@
 
                 micOn = true;
                 audioChunks = 0;
+
                 setMicState("listening");
                 setStatus("Listening...");
             }
@@ -204,7 +215,6 @@
             function stopMic() {
                 micOn = false;
 
-                // only send "audio_end" if we actually streamed some audio
                 if (ws && ws.readyState === WebSocket.OPEN && audioChunks > 0) {
                     ws.send(JSON.stringify({type: "audio_end"}));
                 }
@@ -231,7 +241,9 @@
 
             micButton.addEventListener("click", toggleMic);
 
-            /* Audio Playback */
+            /* -------------------------
+       AUDIO PLAYBACK
+       ------------------------- */
             function queue(samples) {
                 playQueue.push(samples);
                 if (!playing) 
@@ -256,10 +268,12 @@
                 buf
                     .getChannelData(0)
                     .set(samp);
+
                 const src = playCtx.createBufferSource();
                 src.buffer = buf;
                 src.connect(playCtx.destination);
                 src.start();
+
                 src.onended = () => {
                     playing = false;
                     playNext();
@@ -272,7 +286,9 @@
                 setMicState("listening");
             }
 
-            /* Decode AI Events */
+            /* -------------------------
+       ROUTE AI EVENTS
+       ------------------------- */
             function route(msg) {
                 if (msg.type === "ai") 
                     handleAI(msg.evt);
@@ -285,6 +301,7 @@
             function handleAI(e) {
                 if (!e || !e.type) 
                     return;
+                
                 const t = e.type;
 
                 if (t === "response.output_audio.delta") {
@@ -323,7 +340,9 @@
                 }
             }
 
-            /* Utils */
+            /* -------------------------
+       AUDIO UTILITIES
+       ------------------------- */
             function floatToPCM(f) {
                 const out = new Int16Array(f.length);
                 for (let i = 0; i < f.length; i++) {
@@ -344,9 +363,11 @@
                 const bytes = new Uint8Array(bin.length);
                 for (let i = 0; i < bin.length; i++) 
                     bytes[i] = bin.charCodeAt(i);
+                
                 const dv = new DataView(bytes.buffer);
                 const len = bytes.byteLength / 2;
                 const out = new Float32Array(len);
+
                 for (let i = 0; i < len; i++) {
                     out[i] = dv.getInt16(i * 2, true) / 0x8000;
                 }

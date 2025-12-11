@@ -155,6 +155,8 @@ export class OpenAIRealtimeConnection {
   public close() {
     try {
       this.ws.close()
-    } catch (e) {}
+    } catch (e) {
+      console.log("I AM IN ERORR", e)
+    }
   }
 }

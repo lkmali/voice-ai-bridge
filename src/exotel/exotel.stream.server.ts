@@ -3,96 +3,77 @@ import WebSocket, { WebSocketServer } from "ws"
 import { OpenAIRealtimeConnection } from "./open-ai/openaiRealtime"
 import { logger } from "../logger"
 
-/**
- * Create a WebSocketServer that Exotel will connect to.
- * Path should match EXOTEL_STREAM_PATH, defined in config.
- */
 export function createExotelStreamServer(
   server: Server,
   path = "/exotel-media"
 ) {
-  const wss = new WebSocketServer({ server, path })
+  const wss = new WebSocketServer({ noServer: true })
+
+  server.on("upgrade", (req, socket, head) => {
+    if (req.url === path) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req)
+      })
+    } else {
+      socket.destroy()
+    }
+  })
 
   wss.on("connection", (ws) => {
-    logger.info("Exotel Media socket connected")
+    logger.info("📞 Exotel media WebSocket connected")
 
-    // Create an OpenAI realtime connection for this call
     const ai = new OpenAIRealtimeConnection(
       (evt) => {
-        // Forward AI audio chunks back to Exotel in Exotel's expected shape
+        // Send AI audio back to Exotel
         if (evt.type === "response.output_audio.delta" && evt.audio) {
-          // Exotel expects: { event: "media", media: { payload: "<base64>" } }
           ws.send(
-            JSON.stringify({ event: "media", media: { payload: evt.audio } })
+            JSON.stringify({
+              event: "media",
+              media: { payload: evt.audio },
+            })
           )
         }
-
-        // other events can be forwarded if needed
       },
-      () => {
-        logger.info("OpenAI realtime ready")
-        // Optionally, notify Exotel that AI is ready.
-        // ws.send(JSON.stringify({ event: "ai_ready" }));
-      },
-      (err) => {
-        logger.error("OpenAI error", err)
-        try {
-          ws.send(JSON.stringify({ event: "error", error: err }))
-        } catch {}
-      }
+      () => logger.info("🤖 OpenAI realtime ready"),
+      (err) => logger.error("❌ OpenAI error", err)
     )
 
-    // Buffering and simple commit strategy (VAD-like)
     let commitTimer: NodeJS.Timeout | null = null
-    const SILENCE_COMMIT_MS = 600 // commit when no audio for 600ms
+    const COMMIT_MS = 600
 
     ws.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString())
-        // Exotel typically sends media frames as:
-        // { event: 'media', media: { payload: '<base64 audio>' } }
-        if (msg.event === "media" && msg.media && msg.media.payload) {
-          const payload: string = msg.media.payload
-
-          // Append to OpenAI
-          ai.sendAudio(payload)
-
-          // Reset commit timer
-          if (commitTimer) clearTimeout(commitTimer)
-          commitTimer = setTimeout(() => {
-            try {
-              ai.endAudio() // commit + create response
-            } catch (e) {
-              logger.error("commit error", e)
-            } finally {
-              commitTimer = null
-            }
-          }, SILENCE_COMMIT_MS)
-        }
 
         if (msg.event === "start") {
-          logger.info("Call stream started")
+          logger.info("▶️ Exotel stream started")
+        }
+
+        if (msg.event === "media" && msg.media?.payload) {
+          ai.sendAudio(msg.media.payload)
+
+          if (commitTimer) clearTimeout(commitTimer)
+          commitTimer = setTimeout(() => {
+            ai.endAudio()
+            commitTimer = null
+          }, COMMIT_MS)
         }
 
         if (msg.event === "stop") {
-          logger.info("Call stream stopped - committing and closing")
+          logger.info("⏹ Exotel stream stopped")
           if (commitTimer) clearTimeout(commitTimer)
           ai.endAudio()
           ai.close()
+          ws.close()
         }
       } catch (err) {
-        logger.error("Invalid message from Exotel", err)
+        logger.error("Invalid Exotel payload", err)
       }
     })
 
     ws.on("close", () => {
-      logger.info("Exotel stream connection closed")
+      logger.info("🔌 Exotel media socket closed")
       if (commitTimer) clearTimeout(commitTimer)
-      ai.close()
-    })
-
-    ws.on("error", (err) => {
-      logger.error("Exotel stream ws error", err)
       ai.close()
     })
   })

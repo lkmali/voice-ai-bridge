@@ -1,6 +1,6 @@
 import axios from "axios"
 import FormData from "form-data"
-import { EXOTEL, PUBLIC_HOST, STREAM_URL } from "./config"
+import { EXOTEL, EXOTEL_CALL_URL, PUBLIC_HOST, STREAM_URL } from "./config"
 import { logger } from "./logger"
 
 export async function triggerExotelAIStreamCall(from: string) {
@@ -13,11 +13,13 @@ export async function triggerExotelAIStreamCall(from: string) {
   //   fd.append("Url", exomlUrl)
 
   fd.append("From", from)
-  fd.append("To", "+918044319380")
+  // fd.append("To", "+918442033493")
   fd.append("CallerId", EXOTEL.CALLER_ID)
-  fd.append("StreamUrl", STREAM_URL)
+  //fd.append("StreamUrl", STREAM_URL)
+  fd.append("Url", EXOTEL_CALL_URL)
   fd.append("StreamBegin", "atLeg1connect")
 
+  console.log("STREAM_URL", EXOTEL_CALL_URL)
   const url = `https://${EXOTEL.SUBDOMAIN}/v1/Accounts/${EXOTEL.SID}/Calls/connect`
   const auth = Buffer.from(`${EXOTEL.API_KEY}:${EXOTEL.API_TOKEN}`).toString(
     "base64"

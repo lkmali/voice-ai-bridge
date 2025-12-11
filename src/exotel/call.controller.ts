@@ -24,17 +24,16 @@ router.post("/call", async (req, res) => {
 })
 
 router.get("/exoml/ai", (req, res) => {
-  console.log("I AM CALLING THE exoml API", req.headers)
-  console.log("I AM CALLING THE exoml API", req)
-  const streamUrl = STREAM_URL
+  console.log("Exotel requested EXOML") // SAFE
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<TwilioResponse>
-  <StartAudioStream url="${streamUrl}" />
+<Response>
+  <StartAudioStream url="wss://d0be302a625d.ngrok-free.app/exotel-media" />
   <Pause length="1800" />
-</TwilioResponse>`
+</Response>`
 
-  res.type("text/xml").send(xml)
+  res.set("Content-Type", "text/xml")
+  res.send(xml)
 })
 
 export default router
