@@ -7,3 +7,4 @@ package-lock.json
 .esbuild/
 yarn-error.log
 yarn.lock
+.env
