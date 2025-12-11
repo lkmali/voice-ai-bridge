@@ -1,6 +1,6 @@
 import http from "http"
 import app from "./app"
-import { createExotelStreamServer } from "./exotel.stream.server"
+import { createExotelStreamServer } from "./exotel/exotel.stream.server"
 import { APP_PORT, EXOTEL_STREAM_PATH } from "./config"
 import { logger } from "./logger"
 

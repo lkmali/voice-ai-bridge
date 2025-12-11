@@ -1,7 +1,7 @@
 import express from "express"
 import bodyParser from "body-parser"
-import exotelWebhooks from "./exotel.webhook.controller"
-import callController from "./call.controller"
+import exotelWebhooks from "./exotel/exotel.webhook.controller"
+import callController from "./exotel/call.controller"
 import path from "path"
 
 const app = express()
@@ -11,7 +11,7 @@ app.use(bodyParser.urlencoded({ extended: true }))
 app.use(bodyParser.json())
 
 // Static UI (optional)
-app.use(express.static(path.join(process.cwd(), "public")))
+app.use(express.static(path.join(__dirname, "../public")))
 
 app.use("/exotel", exotelWebhooks)
 app.use("/api", callController)

@@ -1,7 +1,7 @@
 import express from "express"
-import { triggerExotelAIStreamCall } from "./exotel.client"
-import { logger } from "./logger"
-import { EXOTEL_STREAM_PATH, PUBLIC_HOST, STREAM_URL } from "./config"
+import { triggerExotelAIStreamCall } from "../exotel.client"
+import { logger } from "../logger"
+import { EXOTEL_STREAM_PATH, PUBLIC_HOST, STREAM_URL } from "../config"
 
 const router = express.Router()
 
