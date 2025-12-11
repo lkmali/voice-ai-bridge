@@ -32,7 +32,7 @@ services:
   certbot:
     image: certbot/certbot
     container_name: voice-certbot
-    command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email YOUR_EMAIL --agree-tos --non-interactive
+    command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email laxmanasawa9312@gmail.com --agree-tos --non-interactive
     volumes:
       - ./nginx/ssl:/etc/letsencrypt
       - ./frontend:/var/www/frontend
