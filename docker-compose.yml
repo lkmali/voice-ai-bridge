@@ -1,16 +1,18 @@
 version: "3.8"
 
 services:
-  backend:
+  app:
+    build: .
     container_name: voice-backend
+    image: voice-backend:latest
     restart: always
+    ports:
+      - "80:3000"
     env_file:
       - .env
-    ports:
-      - "3000:3000"
     networks:
-      - voice-net
-
+      - voice-net  
+      
   nginx:
     image: nginx:latest
     container_name: voice-nginx
@@ -25,13 +27,13 @@ services:
     networks:
       - voice-net
 
-  certbot:
-    image: certbot/certbot
-    container_name: voice-certbot
-    command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email YOUR_EMAIL --agree-tos --non-interactive
-    volumes:
-      - ./nginx/ssl:/etc/letsencrypt
-      - ./frontend:/var/www/frontend
+certbot:
+  image: certbot/certbot
+  container_name: voice-certbot
+  command: certonly --webroot --webroot-path=/var/www/frontend -d YOUR_DOMAIN.com --email YOUR_EMAIL --agree-tos --non-interactive
+  volumes:
+    - ./nginx/ssl:/etc/letsencrypt
+    - ./frontend:/var/www/frontend
 
 networks:
   voice-net:
