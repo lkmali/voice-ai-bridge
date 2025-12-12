@@ -33,7 +33,7 @@ services:
     image: certbot/certbot
     container_name: voice-certbot
     command: >
-      /usr/bin/certbot certonly --webroot
+      certonly --webroot
       --webroot-path=/var/www/html
       -d voice.aiplustechnology.com
       --email laxmanasawa9312@gmail.com
