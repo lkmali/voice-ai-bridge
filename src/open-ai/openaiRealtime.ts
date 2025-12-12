@@ -1,6 +1,10 @@
+/* =========================
+   File: src/open-ai/openaiRealtime.ts
+   ========================= */
 import WebSocket from "ws"
-import { OPENAI_API_KEY, OPENAI_REALTIME_MODEL } from "../../config"
-import { Memory } from "./memory"
+import https from "https"
+import { OPENAI_API_KEY, OPENAI_REALTIME_MODEL } from "../config"
+import { logger } from "../logger"
 
 type EventHandler = (evt: any) => void
 type ReadyHandler = () => void
@@ -11,7 +15,6 @@ export class OpenAIRealtimeConnection {
   private connId: string
   private hasAudio = false
   private activeResponseId: string | null = null
-  private memory = new Memory()
 
   constructor(
     private onEvent: EventHandler,
@@ -24,61 +27,67 @@ export class OpenAIRealtimeConnection {
       OPENAI_REALTIME_MODEL
     )}`
 
-    console.log(`[OPENAI CONNECT:${this.connId}]`, url)
+    logger.info(`[OPENAI CONNECT:${this.connId}] ${url}`)
+
+    const agent = new https.Agent({
+      keepAlive: false,
+      rejectUnauthorized: true,
+    })
 
     this.ws = new WebSocket(url, {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
         "OpenAI-Beta": "realtime=v1",
       },
-    })
+      agent,
+    } as any)
 
     this.setupListeners()
   }
 
   private setupListeners() {
     this.ws.on("open", () => {
+      logger.info("✅ OpenAI WebSocket OPEN")
       this.configureSession()
       this.onReady()
     })
 
+    this.ws.on("unexpected-response", (req, res) => {
+      logger.error(
+        "❌ OPENAI WS Unexpected Response",
+        res.statusCode,
+        res.headers
+      )
+      res.on("data", (chunk) => logger.error("Body:", chunk.toString()))
+    })
+
     this.ws.on("error", (err) => {
+      logger.error("❌ OPENAI SOCKET ERROR", err)
       this.onError({ type: "socket_error", err })
     })
 
-    this.ws.on("close", () => {
-      this.onError({ type: "socket_closed" })
+    this.ws.on("close", (code, reason) => {
+      logger.error("❌ OPENAI SOCKET CLOSED", {
+        code,
+        reason: reason?.toString(),
+      })
+      this.onError({ type: "socket_closed", code, reason })
     })
 
     this.ws.on("message", (data) => {
-      const evt = JSON.parse(data.toString())
+      let evt: any = {}
+      try {
+        evt = JSON.parse(data.toString())
+      } catch (e) {
+        // Non-JSON frames can appear (rare). We ignore them.
+        logger.warn(
+          "⚠️ Non-JSON frame from OpenAI",
+          data.toString().slice(0, 200)
+        )
+        return
+      }
       this.handleEvent(evt)
     })
-  }
-
-  private handleEvent(evt: any) {
-    if (evt.type === "error") {
-      this.onError(evt.error)
-      return
-    }
-
-    // map event names for your frontend
-    evt = this.mapEvent(evt)
-
-    // track response
-    if (evt.type === "response.created") {
-      this.activeResponseId = evt.response?.id ?? null
-    }
-    if (evt.type === "response.completed") {
-      this.activeResponseId = null
-    }
-
-    // store assistant final text in memory
-    if (evt.type === "response.output_text.done") {
-      if (evt.text) this.memory.add("assistant", evt.text)
-    }
-
-    this.onEvent(evt)
   }
 
   private mapEvent(evt: any) {
@@ -107,13 +116,32 @@ export class OpenAIRealtimeConnection {
     }
   }
 
-  private send(obj: any) {
-    if (this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(obj))
+  private handleEvent(evt: any) {
+    if (evt.type === "error") {
+      logger.error("❌ OpenAI EVENT ERROR:", evt.error)
+      this.onError(evt.error)
+      return
     }
+
+    evt = this.mapEvent(evt)
+
+    if (evt.type === "response.created") {
+      this.activeResponseId = evt.response?.id ?? null
+    }
+    if (evt.type === "response.completed") {
+      this.activeResponseId = null
+    }
+
+    // Forward to consumer
+    this.onEvent(evt)
+  }
+
+  private send(obj: any) {
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj))
   }
 
   private configureSession() {
+    logger.info("⚙️ Sending session.update to OpenAI...")
     this.send({
       type: "session.update",
       session: {
@@ -134,29 +162,25 @@ export class OpenAIRealtimeConnection {
     })
   }
 
-  public sendAudio(audio: string) {
+  // audio must be base64 string already
+  public sendAudio(audioB64: string) {
     this.hasAudio = true
-    this.send({ type: "input_audio_buffer.append", audio })
+    this.send({ type: "input_audio_buffer.append", audio: audioB64 })
   }
 
   public endAudio() {
     if (!this.hasAudio || this.activeResponseId) return
-
     this.send({ type: "input_audio_buffer.commit" })
     this.send({ type: "response.create" })
     this.hasAudio = false
   }
 
-  public addUserText(text: string) {
-    if (text.trim().length === 0) return
-    this.memory.add("user", text)
-  }
-
   public close() {
+    logger.info("🔌 Closing OpenAI WebSocket...")
     try {
       this.ws.close()
     } catch (e) {
-      console.log("I AM IN ERORR", e)
+      logger.error("Close error:", e)
     }
   }
 }

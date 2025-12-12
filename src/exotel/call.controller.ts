@@ -1,44 +1,26 @@
 import express from "express"
 import { triggerExotelAIStreamCall } from "../exotel.client"
 import { logger } from "../logger"
-import { EXOTEL_STREAM_PATH, PUBLIC_HOST, STREAM_URL } from "../config"
 
 const router = express.Router()
 
-router.get("/health", (req, res) => {
-  res.json({ message: "I MA RUNNING" })
-})
-/**
- * POST /api/call
- * { from: "+91...", to: "+91..." }
- */
+router.get("/health", (req, res) => res.json({ ok: true, message: "running" }))
+
 router.post("/call", async (req, res) => {
   const { from, to } = req.body
-  if (!from) return res.status(400).json({ error: "from and to are required" })
+  if (!from) return res.status(400).json({ error: "`from` is required" })
 
   try {
-    const result = await triggerExotelAIStreamCall(from)
+    const result = await triggerExotelAIStreamCall(from, to)
     logger.info("Exotel connect response", result)
-    res.json({ ok: true, result })
-  } catch (err) {
-    logger.error("Failed to trigger Exotel connect", err)
-    res.status(500).json({ ok: false, error: (err as any).toString() })
+    return res.json({ ok: true, result })
+  } catch (err: any) {
+    logger.error(
+      "Failed to trigger Exotel connect",
+      err?.response?.data || err?.toString()
+    )
+    return res.status(500).json({ ok: false, error: err?.toString() })
   }
-})
-
-router.get("/exoml/ai", (req, res) => {
-  console.log("Exotel requested EXOML") // SAFE
-
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<TwilioResponse>
-    <StartAudioStream url="wss://voice.aiplustechnology.com/exotel-media"/>
-    <Say>Connecting you to AI...</Say>
-    <Pause length="1800"/>
-</TwilioResponse>
-`
-
-  res.set("Content-Type", "text/xml")
-  res.send(xml)
 })
 
 export default router
