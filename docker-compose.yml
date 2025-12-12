@@ -10,12 +10,7 @@ services:
       - .env
     networks:
       - voice-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health" ]
-      interval: 10s
-      timeout: 2s
-      retries: 5
-
+  
   nginx:
     image: nginx:latest
     restart: always
