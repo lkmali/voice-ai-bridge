@@ -31,7 +31,7 @@ router.get("/exoml/ai", (req, res) => {
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <StartAudioStream url="wss://d0be302a625d.ngrok-free.app/exotel-media" />
+  <StartAudioStream url="wss://voice.aiplustechnology.com/exotel-media" />
   <Pause length="1800" />
 </Response>`
 
