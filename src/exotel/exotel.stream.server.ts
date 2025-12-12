@@ -22,6 +22,11 @@ export function createExotelStreamServer(
   wss.on("connection", (ws) => {
     logger.info("📞 Exotel media WebSocket connected")
 
+    // Respond to ping frames to avoid premature disconnect
+    ws.on("ping", () => {
+      ws.pong()
+    })
+
     const ai = new OpenAIRealtimeConnection(
       (evt) => {
         // Send AI audio back to Exotel
@@ -43,29 +48,39 @@ export function createExotelStreamServer(
 
     ws.on("message", (raw) => {
       try {
-        const msg = JSON.parse(raw.toString())
+        const text = raw.toString("utf8")
 
-        if (msg.event === "start") {
-          logger.info("▶️ Exotel stream started")
-        }
+        // 🔥 Check if message is JSON
+        if (text.startsWith("{")) {
+          const msg = JSON.parse(text)
 
-        if (msg.event === "media" && msg.media?.payload) {
-          ai.sendAudio(msg.media.payload)
+          if (msg.event === "start") {
+            logger.info("▶️ Exotel stream started")
+          }
 
-          if (commitTimer) clearTimeout(commitTimer)
-          commitTimer = setTimeout(() => {
+          if (msg.event === "media" && msg.media?.payload) {
+            ai.sendAudio(msg.media.payload)
+
+            if (commitTimer) clearTimeout(commitTimer)
+            commitTimer = setTimeout(() => {
+              ai.endAudio()
+              commitTimer = null
+            }, COMMIT_MS)
+          }
+
+          if (msg.event === "stop") {
+            logger.info("⏹ Exotel stream stopped")
+            if (commitTimer) clearTimeout(commitTimer)
             ai.endAudio()
-            commitTimer = null
-          }, COMMIT_MS)
+            ai.close()
+            ws.close()
+          }
+
+          return
         }
 
-        if (msg.event === "stop") {
-          logger.info("⏹ Exotel stream stopped")
-          if (commitTimer) clearTimeout(commitTimer)
-          ai.endAudio()
-          ai.close()
-          ws.close()
-        }
+        // 🔥 Non-JSON frame received (binary ping/pong or other)
+        logger.warn("Received non-JSON frame from Exotel (ignored)")
       } catch (err) {
         logger.error("Invalid Exotel payload", err)
       }
