@@ -31,9 +31,8 @@ services:
   certbot:
     image: certbot/certbot
     container_name: voice-certbot
-    entrypoint: ""
     command: >
-      certonly --webroot
+      certbot certonly --webroot
       --webroot-path=/var/www/html
       -d voice.aiplustechnology.com
       --email laxmanasawa9312@gmail.com
