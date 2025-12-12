@@ -30,10 +30,12 @@ router.get("/exoml/ai", (req, res) => {
   console.log("Exotel requested EXOML") // SAFE
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <StartAudioStream url="wss://voice.aiplustechnology.com/exotel-media" />
-  <Pause length="1800" />
-</Response>`
+<TwilioResponse>
+    <StartAudioStream url="wss://voice.aiplustechnology.com/exotel-media"/>
+    <Say>Connecting you to AI...</Say>
+    <Pause length="1800"/>
+</TwilioResponse>
+`
 
   res.set("Content-Type", "text/xml")
   res.send(xml)
