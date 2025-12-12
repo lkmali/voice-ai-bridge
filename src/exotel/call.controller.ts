@@ -1,41 +1,60 @@
 import express from "express"
 import { triggerExotelAIStreamCall } from "../exotel.client"
 import { logger } from "../logger"
-import { EXOTEL_STREAM_PATH, PUBLIC_HOST, STREAM_URL } from "../config"
+import { EXOTEL_STREAM_PATH, PUBLIC_HOST } from "../config"
 
 const router = express.Router()
 
+/**
+ * Health check
+ */
 router.get("/health", (req, res) => {
-  res.json({ message: "I MA RUNNING" })
+  res.json({ ok: true, message: "I AM RUNNING" })
 })
+
 /**
  * POST /api/call
- * { from: "+91...", to: "+91..." }
+ * Only `from` is required for Flow v1.
+ * Flow App handles routing, EXOML, and WebSocket connection.
  */
 router.post("/call", async (req, res) => {
-  const { from, to } = req.body
-  if (!from) return res.status(400).json({ error: "from and to are required" })
+  const { from } = req.body
+  if (!from) {
+    return res.status(400).json({ error: "`from` is required" })
+  }
 
   try {
     const result = await triggerExotelAIStreamCall(from)
     logger.info("Exotel connect response", result)
     res.json({ ok: true, result })
-  } catch (err) {
-    logger.error("Failed to trigger Exotel connect", err)
-    res.status(500).json({ ok: false, error: (err as any).toString() })
+  } catch (err: any) {
+    logger.error(
+      "Failed to trigger Exotel connect",
+      err?.response?.data || err.toString()
+    )
+    res.status(500).json({
+      ok: false,
+      error: err?.response?.data || err.toString(),
+    })
   }
 })
 
+/**
+ * EXOML endpoint — Exotel Flow v1 Passthru calls this.
+ * This EXOML tells Exotel to start streaming audio to your WebSocket.
+ */
 router.get("/exoml/ai", (req, res) => {
-  console.log("Exotel requested EXOML") // SAFE
+  console.log("Exotel requested EXOML")
+
+  // MUST be wss:// + your domain + stream path
+  const wsUrl = `wss://${PUBLIC_HOST}${EXOTEL_STREAM_PATH}`
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <TwilioResponse>
-    <StartAudioStream url="wss://voice.aiplustechnology.com/exotel-media"/>
+    <StartAudioStream url="${wsUrl}" />
     <Say>Connecting you to AI...</Say>
     <Pause length="1800"/>
-</TwilioResponse>
-`
+</TwilioResponse>`
 
   res.set("Content-Type", "text/xml")
   res.send(xml)
