@@ -4,6 +4,7 @@ services:
   app:
     build: .
     image: voice-backend:latest
+    container_name: voice-backend
     restart: always
     expose:
       - "3000"
@@ -16,15 +17,15 @@ services:
     image: nginx:latest
     container_name: voice-nginx
     restart: always
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/letsencrypt
       - ./nginx/webroot:/var/www/html
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      - app
     networks:
       - voice-net
 
@@ -32,7 +33,7 @@ services:
     image: certbot/certbot
     container_name: voice-certbot
     command: >
-      certbot certonly --webroot
+      /usr/bin/certbot certonly --webroot
       --webroot-path=/var/www/html
       -d voice.aiplustechnology.com
       --email laxmanasawa9312@gmail.com
@@ -47,5 +48,3 @@ services:
 networks:
   voice-net:
     driver: bridge
-
-
