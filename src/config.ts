@@ -13,4 +13,4 @@ export const EXOTEL_STREAM_PATH =
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 export const OPENAI_REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview-2024-12-17"
-export const PORT = Number(process.env.PORT || 3000)
+export const APP_PORT = Number(process.env.PORT || 3000)
