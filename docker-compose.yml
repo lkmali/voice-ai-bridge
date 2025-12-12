@@ -34,7 +34,7 @@ services:
     command: >
       certonly --webroot
       --webroot-path=/var/www/html
-      -d ec2-15-207-254-47.ap-south-1.compute.amazonaws.com
+      -d voice.aiplustechnology.com
       --email laxmanasawa9312@gmail.com
       --agree-tos
       --non-interactive
