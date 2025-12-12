@@ -2,10 +2,10 @@
     "name": "voice-ai-exotel-bridge",
     "version": "1.0.0",
     "scripts": {
-        "docker-compose:run": "sudo docker compose up -d --build",
+        "docker-compose:run": "docker-compose up -d --build",
         "build": "rimraf dist && tsc",
-        "start": "rimraf dist && tsc && node dist/src/index.js",
-        "dev": "concurrently \"tsc --watch\" \"nodemon dist/src/index.js\""
+        "start": "rimraf dist && tsc && node dist/server.js",
+        "dev": "concurrently \"tsc --watch\" \"nodemon dist/server.js\""
     },
     "dependencies": {
         "axios": "^1.6.4",
@@ -21,6 +21,9 @@
         "@types/node": "^22.0.0",
         "@types/ws": "^8.5.10",
         "ts-node-dev": "^2.0.0",
-        "typescript": "^5.6.0"
+        "typescript": "^5.6.0",
+        "concurrently": "^9.2.0",
+        "nodemon": "^3.1.10",
+        "rimraf": "^6.0.1"
     }
 }

@@ -5,6 +5,9 @@ import { EXOTEL_STREAM_PATH, PUBLIC_HOST, STREAM_URL } from "../config"
 
 const router = express.Router()
 
+router.get("/health", (req, res) => {
+  res.json({ message: "I MA RUNNING" })
+})
 /**
  * POST /api/call
  * { from: "+91...", to: "+91..." }
