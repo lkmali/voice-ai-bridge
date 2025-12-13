@@ -1,5 +1,5 @@
 import { Server } from "http"
-import WebSocket, { WebSocketServer } from "ws"
+import { WebSocketServer } from "ws"
 import { OpenAIRealtimeConnection } from "./open-ai/openaiRealtime"
 import { logger } from "../logger"
 
@@ -9,8 +9,11 @@ export function createExotelStreamServer(
 ) {
   const wss = new WebSocketServer({ noServer: true })
 
+  // --- Handle HTTP → WebSocket upgrade (important for ?sample-rate)
   server.on("upgrade", (req, socket, head) => {
-    if (req.url === path) {
+    const pathname = req.url?.split("?")[0]
+
+    if (pathname === path) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req)
       })
@@ -19,78 +22,105 @@ export function createExotelStreamServer(
     }
   })
 
-  wss.on("connection", (ws) => {
-    logger.info("📞 Exotel media WebSocket connected")
+  wss.on("connection", (ws, req) => {
+    logger.info("📞 Exotel media WebSocket connected", req.url)
 
-    // Respond to ping frames to avoid premature disconnect
-    ws.on("ping", () => {
-      ws.pong()
-    })
+    let streamSid: string | null = null
+    let commitTimer: NodeJS.Timeout | null = null
+    const COMMIT_MS = 600
 
+    // --- OpenAI realtime connection
     const ai = new OpenAIRealtimeConnection(
       (evt) => {
-        // Send AI audio back to Exotel
-        if (evt.type === "response.output_audio.delta" && evt.audio) {
+        // 🔴 Exotel REQUIRES stream_sid in every media frame
+        if (
+          evt.type === "response.output_audio.delta" &&
+          evt.audio &&
+          streamSid
+        ) {
           ws.send(
             JSON.stringify({
               event: "media",
-              media: { payload: evt.audio },
+              stream_sid: streamSid,
+              media: {
+                payload: evt.audio,
+              },
             })
           )
         }
       },
       () => logger.info("🤖 OpenAI realtime ready"),
-      (err) => logger.error("❌ OpenAI error", err)
+      (err) => logger.error("❌ OpenAI realtime error", err)
     )
 
-    let commitTimer: NodeJS.Timeout | null = null
-    const COMMIT_MS = 600
+    // --- Keepalive
+    ws.on("ping", () => ws.pong())
 
     ws.on("message", (raw) => {
       try {
         const text = raw.toString("utf8")
+        if (!text.startsWith("{")) return
 
-        // 🔥 Check if message is JSON
-        if (text.startsWith("{")) {
-          const msg = JSON.parse(text)
+        const msg = JSON.parse(text)
 
-          if (msg.event === "start") {
-            logger.info("▶️ Exotel stream started")
-          }
+        switch (msg.event) {
+          case "connected":
+            logger.info("🔗 Exotel connected event")
+            break
 
-          if (msg.event === "media" && msg.media?.payload) {
-            ai.sendAudio(msg.media.payload)
+          case "start":
+            streamSid = msg.stream_sid
+            logger.info("▶️ Exotel stream started", {
+              streamSid,
+              callSid: msg.start?.call_sid,
+              sampleRate: msg.start?.media_format?.sample_rate,
+            })
+            break
 
-            if (commitTimer) clearTimeout(commitTimer)
-            commitTimer = setTimeout(() => {
-              ai.endAudio()
-              commitTimer = null
-            }, COMMIT_MS)
-          }
+          case "media":
+            if (msg.media?.payload) {
+              ai.sendAudio(msg.media.payload)
 
-          if (msg.event === "stop") {
-            logger.info("⏹ Exotel stream stopped")
-            if (commitTimer) clearTimeout(commitTimer)
-            ai.endAudio()
-            ai.close()
-            ws.close()
-          }
+              if (commitTimer) clearTimeout(commitTimer)
+              commitTimer = setTimeout(() => {
+                ai.endAudio()
+                commitTimer = null
+              }, COMMIT_MS)
+            }
+            break
 
-          return
+          case "dtmf":
+            logger.info("📟 DTMF received", msg.dtmf?.digit)
+            break
+
+          case "stop":
+            logger.info("⏹ Exotel stream stopped", msg.stop?.reason)
+            cleanup()
+            break
         }
-
-        // 🔥 Non-JSON frame received (binary ping/pong or other)
-        logger.warn("Received non-JSON frame from Exotel (ignored)")
       } catch (err) {
-        logger.error("Invalid Exotel payload", err)
+        logger.error("❌ Invalid Exotel WS payload", err)
       }
     })
 
     ws.on("close", () => {
       logger.info("🔌 Exotel media socket closed")
-      if (commitTimer) clearTimeout(commitTimer)
-      ai.close()
+      cleanup()
     })
+
+    ws.on("error", (err) => {
+      logger.error("❌ WebSocket error", err)
+      cleanup()
+    })
+
+    function cleanup() {
+      if (commitTimer) clearTimeout(commitTimer)
+      ai.endAudio()
+      ai.close()
+      try {
+        ws.close()
+      } catch {}
+    }
   })
 
   return wss

@@ -44,20 +44,14 @@ router.post("/call", async (req, res) => {
  * This EXOML tells Exotel to start streaming audio to your WebSocket.
  */
 router.get("/exoml/ai", (req, res) => {
-  console.log("Exotel requested EXOML")
+  console.log("Exotel requested EXOML", req.headers)
+  const wsUrl = `wss://${PUBLIC_HOST}${EXOTEL_STREAM_PATH}?sample-rate=8000`
 
-  // MUST be wss:// + your domain + stream path
-  const wsUrl = `wss://${PUBLIC_HOST}${EXOTEL_STREAM_PATH}`
+  logger.info("Exotel Voicebot requested WSS", wsUrl)
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<TwilioResponse>
-    <StartAudioStream url="${wsUrl}" />
-    <Say>Connecting you to AI...</Say>
-    <Pause length="1800"/>
-</TwilioResponse>`
-
-  res.set("Content-Type", "text/xml")
-  res.send(xml)
+  res.json({
+    url: wsUrl,
+  })
 })
 
 export default router
