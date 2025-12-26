@@ -1,378 +1,267 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8"/>
-        <title>Voice AI Assistant</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Voice AI Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
 
-        <style>
-            :root {
-                --bg: #ffffff;
-                --bg-card: #f8fafc;
-                --bg-alt: #f1f5f9;
-                --border: #e2e8f0;
-                --text: #0f172a;
-                --subtext: #64748b;
-                --accent: #0ea5e9;
-                --user: #22c55e;
-                --speaker: #818cf8;
-            }
-            body {
-                font-family: system-ui;
-                background: var(--bg);
-                margin: 0;
-                padding: 20px;
-                display: flex;
-                justify-content: center;
-            }
-            .wrapper {
-                width: 100%;
-                max-width: 900px;
-            }
-            #micButton {
-                padding: 10px 20px;
-                border-radius: 50px;
-                font-size: 1rem;
-                cursor: pointer;
-                border: none;
-                margin-bottom: 8px;
-            }
-            #micButton.listening {
-                background: var(--user);
-                color: #fff;
-            }
-            #micButton.thinking {
-                background: var(--accent);
-                color: #fff;
-            }
-            #micButton.speaking {
-                background: var(--speaker);
-                color: #fff;
-            }
-            #status {
-                font-size: 0.85rem;
-                color: var(--subtext);
-            }
-            .chat {
-                background: var(--bg-alt);
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                padding: 12px;
-                height: 420px;
-                overflow-y: auto;
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-                margin-top: 10px;
-            }
-            .msg {
-                padding: 8px 12px;
-                border-radius: 12px;
-                max-width: 75%;
-                white-space: pre-wrap;
-            }
-            .msg.user {
-                background: var(--user);
-                color: white;
-                margin-left: auto;
-            }
-            .msg.assistant {
-                background: white;
-                border: 1px solid var(--border);
-                color: var(--text);
-            }
-        </style>
-    </head>
+  <style>
+    :root {
+      --bg:#ffffff; --bg-alt:#f1f5f9; --border:#e2e8f0;
+      --text:#0f172a; --subtext:#64748b;
+      --user:#22c55e; --assistant:#ffffff;
+    }
+    body {
+      font-family: system-ui;
+      background: var(--bg);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    .wrapper { width:100%; max-width:900px; }
+    #micButton {
+      padding:10px 20px; border-radius:50px;
+      border:none; cursor:pointer;
+      background:var(--user); color:#fff;
+    }
+    #status { font-size:0.85rem; color:var(--subtext); }
+    .chat {
+      margin-top:10px; background:var(--bg-alt);
+      border:1px solid var(--border);
+      border-radius:12px; padding:12px;
+      height:420px; overflow-y:auto;
+      display:flex; flex-direction:column; gap:6px;
+    }
+    .msg { padding:8px 12px; border-radius:12px; max-width:75%; }
+    .msg.user { background:var(--user); color:white; margin-left:auto; }
+    .msg.assistant { background:white; border:1px solid var(--border); }
+  </style>
+</head>
 
-    <body>
-        <div class="wrapper">
-            <button id="micButton" class="listening">🎙 Tap to Speak</button>
-            <div id="status">Connecting...</div>
+<body>
+<div class="wrapper">
+  <button id="micButton">🎙 Tap to Speak</button>
+  <div id="status">Ready</div>
+  <div id="chat" class="chat"></div>
+</div>
 
-            <div id="chat" class="chat"></div>
-            <div id="typing" class="msg assistant" style="display:none;"></div>
-        </div>
+<script>
+/* ================= GLOBALS ================= */
+let ws, audioCtx, scriptNode, mediaStream;
+let micOn = false;
+let playCtx = null;
+let playQueue = [];
+let playing = false;
+let streamSid = "browser-" + Date.now();
 
-        <script>
-            /* GLOBALS */
-            let ws,
-                audioCtx,
-                scriptNode,
-                mediaStream;
-            let micOn = false;
-            let playQueue = [];
-            let playing = false;
-            let playCtx = null;
-            let assistantDraft = "";
-            let userPartial = "";
-            let state = "idle";
-            let audioChunks = 0;
+let userTranscript = "";
+let assistantTranscript = "";
 
-            /* DOM */
-            const micButton = document.getElementById("micButton");
-            const statusEl = document.getElementById("status");
-            const chatEl = document.getElementById("chat");
-            const typingEl = document.getElementById("typing");
+/* ================= DOM ================= */
+const micButton = document.getElementById("micButton");
+const statusEl = document.getElementById("status");
+const chatEl = document.getElementById("chat");
 
-            /* -------------------------
-       CONNECT WS → /exotel-media
-       ------------------------- */
-            function connectWS() {
-                if (ws && ws.readyState === 1) 
-                    return;
-                
-                const u = (
-                    location.protocol === "https:"
-                    ? "wss:"
-                    : "ws:") + "//" + location.host + "/exotel-media"; // <-- FIXED PATH ONLY
+/* ================= WS ================= */
+function connectWS() {
+  if (ws && ws.readyState === WebSocket.OPEN) return;
 
-                ws = new WebSocket(u);
+  const url =
+    (location.protocol === "https:" ? "wss://" : "ws://") +
+    location.host + "/exotel-media";
 
-                ws.onopen = () => setStatus("Ready");
-                ws.onclose = () => setStatus("Disconnected");
-                ws.onerror = () => setStatus("WS Error");
-                ws.onmessage = (ev) => route(JSON.parse(ev.data));
-            }
-            connectWS();
+  ws = new WebSocket(url);
+  ws.onopen = () => console.log("[WS] connected");
+  ws.onmessage = e => route(JSON.parse(e.data));
+}
+connectWS();
 
-            /* STATE + UI */
-            function setStatus(txt) {
-                statusEl.textContent = txt;
-            }
+/* ================= UI ================= */
+function addMsg(role, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  d.textContent = text;
+  chatEl.appendChild(d);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
 
-            function setMicState(s) {
-                state = s;
-                micButton.className = s;
-                if (s === "listening") 
-                    micButton.textContent = "🎙 Listening...";
-                if (s === "thinking") 
-                    micButton.textContent = "🤔 Thinking...";
-                if (s === "speaking") 
-                    micButton.textContent = "🗣 Speaking...";
-                }
-            
-            /* Chat UI */
-            function addMsg(role, text) {
-                const d = document.createElement("div");
-                d.className = "msg " + role;
-                d.textContent = text;
-                chatEl.appendChild(d);
-                chatEl.scrollTop = chatEl.scrollHeight;
-            }
+/* ================= MIC ================= */
+micButton.onclick = () => micOn ? stopMic() : startMic();
 
-            /* -------------------------
-       MICROPHONE STREAMING
-       ------------------------- */
-            async function toggleMic() {
-                if (!micOn) 
-                    startMic();
-                else 
-                    stopMic();
-                }
-            
-            async function startMic() {
-                connectWS();
-                if (micOn) 
-                    return;
-                
-                if (playing) 
-                    interruptPlayback();
-                
-                mediaStream = await navigator
-                    .mediaDevices
-                    .getUserMedia({audio: true});
+async function startMic() {
+  connectWS();
+  micOn = true;
+  micButton.textContent = "⏹ Stop";
+  statusEl.textContent = "Listening";
 
-                audioCtx = new AudioContext({sampleRate: 24000});
+  ws.send(JSON.stringify({ event: "connected" }));
+  ws.send(JSON.stringify({
+    event: "start",
+    stream_sid: streamSid,
+    start: { call_sid: "browser", media_format: { sample_rate: 8000 } }
+  }));
 
-                const src = audioCtx.createMediaStreamSource(mediaStream);
-                scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  audioCtx = new AudioContext({ sampleRate: 24000 });
+  await audioCtx.resume();
 
-                scriptNode.onaudioprocess = (ev) => {
-                    if (!micOn) 
-                        return;
-                    if (!ws || ws.readyState !== WebSocket.OPEN) 
-                        return;
-                    
-                    const input = ev
-                        .inputBuffer
-                        .getChannelData(0);
-                    const pcm = floatToPCM(input);
+  const src = audioCtx.createMediaStreamSource(mediaStream);
+  scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
 
-                    ws.send(JSON.stringify({type: "audio", audio: pcmBase64(pcm)}));
-                    audioChunks++;
-                };
+  scriptNode.onaudioprocess = e => {
+    if (!micOn || ws.readyState !== WebSocket.OPEN) return;
 
-                src.connect(scriptNode);
-                scriptNode.connect(audioCtx.destination);
+    const input = e.inputBuffer.getChannelData(0);
+    const down = downsample(input, audioCtx.sampleRate, 8000);
+    const pcm = floatToPCM(down);
 
-                micOn = true;
-                audioChunks = 0;
+    console.log("[MIC] frame =", pcm.length, "samples");
 
-                setMicState("listening");
-                setStatus("Listening...");
-            }
+    ws.send(JSON.stringify({
+      event: "media",
+      stream_sid: streamSid,
+      media: { payload: pcmBase64(pcm) }
+    }));
+  };
 
-            function stopMic() {
-                micOn = false;
+  src.connect(scriptNode);
+  scriptNode.connect(audioCtx.destination);
+}
 
-                if (ws && ws.readyState === WebSocket.OPEN && audioChunks > 0) {
-                    ws.send(JSON.stringify({type: "audio_end"}));
-                }
-                audioChunks = 0;
+function stopMic() {
+  micOn = false;
+  micButton.textContent = "🎙 Tap to Speak";
+  statusEl.textContent = "Processing";
 
-                if (scriptNode) 
-                    scriptNode.disconnect();
-                scriptNode = null;
+  ws.send(JSON.stringify({ event: "stop", stream_sid: streamSid }));
+  scriptNode?.disconnect();
+  audioCtx?.close();
+  mediaStream?.getTracks().forEach(t => t.stop());
+}
 
-                if (audioCtx) 
-                    audioCtx.close();
-                audioCtx = null;
+/* ================= ROUTE ================= */
+function route(msg) {
+  /* 🔊 AUDIO FROM SERVER → PLAYBACK */
+  if (msg.event === "media" && msg.media?.payload) {
+    const samples = base64ToFloat(msg.media.payload);
+    console.log("[PLAY] audio frame =", samples.length, "samples");
+    queue(samples);
+    return;
+  }
 
-                if (mediaStream) {
-                    mediaStream
-                        .getTracks()
-                        .forEach((t) => t.stop());
-                    mediaStream = null;
-                }
+  /* 📝 USER TRANSCRIPTION */
+  if (
+    msg.type === "conversation.item.input_audio_transcription.completed" ||
+    msg.type === "user_transcript"
+  ) {
+    const text =
+      msg.text ||
+      msg.transcript ||
+      msg.item?.content?.[0]?.text ||
+      msg.item?.content?.[0]?.transcript ||
+      "";
 
-                setMicState("thinking");
-                setStatus("Processing...");
-            }
+    console.log("[UI] USER SAID:", text);
 
-            micButton.addEventListener("click", toggleMic);
+    if (text.trim()) {
+      addMsg("user", text.trim());
+    }
+    return;
+  }
 
-            /* -------------------------
-       AUDIO PLAYBACK
-       ------------------------- */
-            function queue(samples) {
-                playQueue.push(samples);
-                if (!playing) 
-                    playNext();
-                }
-            
-            function playNext() {
-                if (!playQueue.length) {
-                    playing = false;
-                    setMicState("listening");
-                    return;
-                }
+  /* 🤖 ASSISTANT TEXT */
+  if (
+    msg.type === "response.output_text.done" ||
+    msg.type === "assistant_text"
+  ) {
+    const text =
+      msg.text ||
+      msg.output_text ||
+      msg.item?.content?.[0]?.text ||
+      "";
 
-                playing = true;
-                setMicState("speaking");
+    console.log("[UI] ASSISTANT SAID:", text);
 
-                if (!playCtx) 
-                    playCtx = new AudioContext({sampleRate: 24000});
-                
-                const samp = playQueue.shift();
-                const buf = playCtx.createBuffer(1, samp.length, 24000);
-                buf
-                    .getChannelData(0)
-                    .set(samp);
+    if (text.trim()) {
+      addMsg("assistant", text.trim());
+    }
+    return;
+  }
 
-                const src = playCtx.createBufferSource();
-                src.buffer = buf;
-                src.connect(playCtx.destination);
-                src.start();
+  /* 🧪 DEBUG UNKNOWN EVENTS */
+  console.log("[UI] UNKNOWN EVENT:", msg.type || msg.event, msg);
+}
 
-                src.onended = () => {
-                    playing = false;
-                    playNext();
-                };
-            }
+/* ================= AUDIO PLAYBACK ================= */
+function queue(samples) {
+  playQueue.push(samples);
+  if (!playing) playNext();
+}
 
-            function interruptPlayback() {
-                playQueue = [];
-                playing = false;
-                setMicState("listening");
-            }
+function playNext() {
+  if (!playQueue.length) {
+    playing = false;
+    statusEl.textContent = "Listening";
+    return;
+  }
+  playing = true;
+  statusEl.textContent = "Speaking";
 
-            /* -------------------------
-       ROUTE AI EVENTS
-       ------------------------- */
-            function route(msg) {
-                if (msg.type === "ai") 
-                    handleAI(msg.evt);
-                if (msg.type === "ready") 
-                    setStatus("Listening...");
-                if (msg.type === "error") 
-                    console.error("AI error:", msg.errInfo || msg);
-                }
-            
-            function handleAI(e) {
-                if (!e || !e.type) 
-                    return;
-                
-                const t = e.type;
+  if (!playCtx) playCtx = new AudioContext({ sampleRate: 24000 });
 
-                if (t === "response.output_audio.delta") {
-                    const f = base64ToFloat(e.delta);
-                    queue(f);
-                }
+  const samp = playQueue.shift();
+  const buf = playCtx.createBuffer(1, samp.length, 24000);
+  buf.getChannelData(0).set(samp);
 
-                if (t === "response.output_text.delta") {
-                    assistantDraft += e.delta;
-                    typingEl.style.display = "block";
-                    typingEl.textContent = assistantDraft;
-                }
+  const src = playCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playCtx.destination);
+  src.start();
+  src.onended = playNext;
+}
 
-                if (t === "response.output_text.done") {
-                    if (assistantDraft.trim()) {
-                        typingEl.style.display = "none";
-                        addMsg("assistant", assistantDraft.trim());
-                    }
-                    assistantDraft = "";
-                }
+/* ================= AUDIO UTILS ================= */
+function downsample(buf, inRate, outRate) {
+  const ratio = inRate / outRate;
+  const len = Math.round(buf.length / ratio);
+  const out = new Float32Array(len);
+  let pos = 0;
+  for (let i = 0; i < len; i++) {
+    const next = Math.round((i + 1) * ratio);
+    let sum = 0, count = 0;
+    for (; pos < next && pos < buf.length; pos++) {
+      sum += buf[pos]; count++;
+    }
+    out[i] = sum / count;
+  }
+  return out;
+}
 
-                if (t === "response.completed") {
-                    setMicState("listening");
-                    setStatus("Listening...");
-                }
+function floatToPCM(f) {
+  const out = new Int16Array(f.length);
+  for (let i = 0; i < f.length; i++) {
+    const s = Math.max(-1, Math.min(1, f[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
 
-                if (t === "conversation.item.input_audio_transcription.delta") {
-                    userPartial += e.delta;
-                }
+function pcmBase64(pcm) {
+  return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+}
 
-                if (t === "conversation.item.input_audio_transcription.completed") {
-                    if (userPartial.trim()) {
-                        addMsg("user", userPartial.trim());
-                    }
-                    userPartial = "";
-                }
-            }
-
-            /* -------------------------
-       AUDIO UTILITIES
-       ------------------------- */
-            function floatToPCM(f) {
-                const out = new Int16Array(f.length);
-                for (let i = 0; i < f.length; i++) {
-                    const s = Math.max(-1, Math.min(1, f[i]));
-                    out[i] = s < 0
-                        ? s * 0x8000
-                        : s * 0x7fff;
-                }
-                return out;
-            }
-
-            function pcmBase64(pcm) {
-                return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
-            }
-
-            function base64ToFloat(b) {
-                const bin = atob(b);
-                const bytes = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) 
-                    bytes[i] = bin.charCodeAt(i);
-                
-                const dv = new DataView(bytes.buffer);
-                const len = bytes.byteLength / 2;
-                const out = new Float32Array(len);
-
-                for (let i = 0; i < len; i++) {
-                    out[i] = dv.getInt16(i * 2, true) / 0x8000;
-                }
-                return out;
-            }
-        </script>
-    </body>
+function base64ToFloat(b) {
+  const bin = atob(b);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const dv = new DataView(bytes.buffer);
+  const out = new Float32Array(bytes.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = dv.getInt16(i * 2, true) / 0x8000;
+  }
+  return out;
+}
+</script>
+</body>
 </html>
