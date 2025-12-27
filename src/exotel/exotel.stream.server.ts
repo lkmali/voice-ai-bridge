@@ -43,11 +43,11 @@ function linearToMulaw(sample: number): number {
 /* EXOTEL STREAM SERVER */
 /* ===================================================== */
 
-export function createExotelStreamServer(server: Server) {
+export function createExotelStreamServer(server: Server, path: string) {
   const wss = new WebSocketServer({ noServer: true })
 
   server.on("upgrade", (req, socket, head) => {
-    if (req.url === "/exotel-media") {
+    if (req.url === path) {
       wss.handleUpgrade(req, socket, head, ws => {
         wss.emit("connection", ws)
       })
