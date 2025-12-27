@@ -1,3 +1,4 @@
+// openai.realtime.ts
 import WebSocket from "ws"
 import {
   OPENAI_API_KEY,
@@ -6,19 +7,23 @@ import {
   OPENAI_PROMPT_VERSION,
 } from "../../config"
 
-export class OpenAIRealtimeConnection {
-  private ws: WebSocket
+export class OpenAIRealtime {
+  private ws!: WebSocket
   private ready = false
   private hasAudio = false
-  private audioQueue: string[] = []
 
   constructor(
-    private onAudio: (pcmBase64: string) => void,
+    private onAudio: (pcm16Base64: string) => void,
     private onUserText: (text: string) => void,
-    private onAiText: (text: string) => void
+    private onAiText: (text: string) => void,
+    private onBargeIn: () => void
   ) {
+    this.connect()
+  }
+
+  private connect() {
     this.ws = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=${OPENAI_REALTIME_MODEL}`,
+      "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -28,100 +33,64 @@ export class OpenAIRealtimeConnection {
     )
 
     this.ws.on("open", () => {
-      console.log("🟢 OPENAI CONNECTED")
       this.ready = true
+      console.log("🟢 OPENAI READY")
 
       this.ws.send(JSON.stringify({
         type: "session.update",
         session: {
           modalities: ["audio", "text"],
-          turn_detection: { type: "server_vad" },
-          voice: "alloy",
+          turn_detection: { type: "server_vad", silence_duration_ms: 600 },
           input_audio_format: "pcm16",
           output_audio_format: "pcm16",
-          input_audio_transcription: {
-            model: "gpt-4o-mini-transcribe",
-            language: "en",
-          },
-          instructions: "You are a voice assistant. Speak English only.",
-          prompt: {
-            id: OPENAI_PROMPT_ID,
-            version: OPENAI_PROMPT_VERSION,
-          },
+          voice: "alloy",
+          instructions: "You are a professional English-speaking voice assistant.",
         },
       }))
-
-      // 🔥 FLUSH BUFFERED AUDIO
-      for (const chunk of this.audioQueue) {
-        this.ws.send(JSON.stringify({
-          type: "input_audio_buffer.append",
-          audio: chunk,
-        }))
-      }
-      this.audioQueue = []
     })
 
-    this.ws.on("message", msg => {
-      const evt = JSON.parse(msg.toString())
-      this.handle(evt)
-    })
-
-    this.ws.on("error", err => {
-      console.error("❌ OPENAI WS ERROR", err)
-    })
+    this.ws.on("message", raw => this.handle(JSON.parse(raw.toString())))
   }
 
   private handle(evt: any) {
+    if (evt.type === "input_audio_buffer.speech_started") {
+      this.onBargeIn()
+    }
+
     if (evt.type === "conversation.item.input_audio_transcription.completed") {
-      if (evt.transcript) this.onUserText(evt.transcript)
-      return
+      this.onUserText(evt.transcript)
     }
 
     if (evt.type === "response.audio_transcript.done") {
-      if (evt.transcript) this.onAiText(evt.transcript)
-      return
+      this.onAiText(evt.transcript)
     }
 
-    if (evt.type === "response.audio.delta" && evt.delta) {
+    if (evt.type === "response.audio.delta") {
       this.onAudio(evt.delta)
-      return
-    }
-
-    if (evt.type === "error") {
-      console.error("❌ OPENAI ERROR:", evt.error)
     }
   }
 
-  sendAudio(base64Pcm: string) {
+  sendAudio(pcm16Base64: string) {
+    if (!this.ready) return
     this.hasAudio = true
-
-    if (!this.ready || this.ws.readyState !== WebSocket.OPEN) {
-      // 🔥 BUFFER UNTIL READY
-      this.audioQueue.push(base64Pcm)
-      return
-    }
-
     this.ws.send(JSON.stringify({
       type: "input_audio_buffer.append",
-      audio: base64Pcm,
+      audio: pcm16Base64,
     }))
   }
 
-  endAudio() {
-    if (!this.hasAudio || !this.ready) return
-
+  endTurn() {
+    if (!this.hasAudio) return
     this.ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }))
-    this.ws.send(JSON.stringify({
-      type: "response.create",
-      response: { modalities: ["audio", "text"] },
-    }))
-
+    this.ws.send(JSON.stringify({ type: "response.create" }))
     this.hasAudio = false
   }
 
+  truncate() {
+    this.ws.send(JSON.stringify({ type: "response.cancel" }))
+  }
+
   close() {
-    try {
-      this.ws.close()
-    } catch {}
+    this.ws.close()
   }
 }

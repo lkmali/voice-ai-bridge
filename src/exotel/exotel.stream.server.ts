@@ -1,47 +1,9 @@
-import { Server } from "http"
+// exotel.stream.server.ts
 import { WebSocketServer } from "ws"
-import { OpenAIRealtimeConnection } from "./open-ai/openaiRealtime"
-
-/* ===================================================== */
-/* PCM16 → G711 μ-law (CORRECT ITU-T) */
-/* ===================================================== */
-
-function pcm16ToG711(base64Pcm: string): string {
-  const pcm = Buffer.from(base64Pcm, "base64")
-  const out = Buffer.alloc(pcm.length / 2)
-
-  for (let i = 0; i < out.length; i++) {
-    const sample = pcm.readInt16LE(i * 2)
-    out[i] = linearToMulaw(sample)
-  }
-
-  return out.toString("base64")
-}
-
-function linearToMulaw(sample: number): number {
-  const MAX = 32635
-  let sign = 0
-
-  if (sample < 0) {
-    sign = 0x80
-    sample = -sample
-  }
-
-  if (sample > MAX) sample = MAX
-  sample += 132
-
-  let exponent = 7
-  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
-    exponent--
-  }
-
-  const mantissa = (sample >> (exponent + 3)) & 0x0f
-  return ~(sign | (exponent << 4) | mantissa) & 0xff
-}
-
-/* ===================================================== */
-/* EXOTEL STREAM SERVER */
-/* ===================================================== */
+import { OpenAIRealtime } from "./open-ai/openaiRealtime"
+import { pcm16ToG711 } from "./g711"
+import { silenceG711Base64 } from "./silence"
+import { Server } from "http"
 
 export function createExotelStreamServer(server: Server, path: string) {
   const wss = new WebSocketServer({ noServer: true })
@@ -51,27 +13,37 @@ export function createExotelStreamServer(server: Server, path: string) {
       wss.handleUpgrade(req, socket, head, ws => {
         wss.emit("connection", ws)
       })
-    } else {
-      socket.destroy()
-    }
+    } else socket.destroy()
   })
 
   wss.on("connection", ws => {
     let streamSid = ""
+    let silenceTimer: NodeJS.Timeout
 
-    const ai = new OpenAIRealtimeConnection(
-      pcmBase64 => {
+    const ai = new OpenAIRealtime(
+      pcm16 => {
         ws.send(JSON.stringify({
           event: "media",
           stream_sid: streamSid,
-          media: {
-            payload: pcm16ToG711(pcmBase64),
-          },
+          media: { payload: pcm16ToG711(pcm16) },
         }))
       },
       text => console.log("👤 USER:", text),
-      text => console.log("🤖 AI:", text)
+      text => console.log("🤖 AI:", text),
+      () => {
+        console.log("🛑 BARGE-IN")
+        ai.truncate()
+      }
     )
+
+    // 🔥 Silence padding (critical)
+    silenceTimer = setInterval(() => {
+      ws.send(JSON.stringify({
+        event: "media",
+        stream_sid: streamSid,
+        media: { payload: silenceG711Base64() },
+      }))
+    }, 200)
 
     ws.on("message", raw => {
       const msg = JSON.parse(raw.toString())
@@ -81,16 +53,20 @@ export function createExotelStreamServer(server: Server, path: string) {
         console.log("📞 CALL START", streamSid)
       }
 
-      if (msg.event === "media" && msg.media?.payload) {
+      if (msg.event === "media") {
         ai.sendAudio(msg.media.payload)
       }
 
       if (msg.event === "stop") {
         console.log("📞 CALL STOP", streamSid)
-        ai.endAudio()
+        ai.endTurn()
+        clearInterval(silenceTimer)
       }
     })
 
-    ws.on("close", () => ai.close())
+    ws.on("close", () => {
+      clearInterval(silenceTimer)
+      ai.close()
+    })
   })
 }
