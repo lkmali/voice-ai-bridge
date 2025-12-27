@@ -1,195 +1,428 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Exotel Voice AI Test</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+<html lang="en">
+    <head>
+        <meta charset="UTF-8"/>
+        <title>Voice AI Assistant</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1"/>
 
-  <style>
-    body {
-      font-family: system-ui;
-      background: #f8fafc;
-      padding: 20px;
-    }
-    button {
-      padding: 12px 24px;
-      font-size: 16px;
-      border-radius: 999px;
-      border: none;
-      background: #22c55e;
-      color: white;
-      cursor: pointer;
-    }
-    #status {
-      margin-top: 8px;
-      color: #64748b;
-    }
-  </style>
-</head>
+        <style>
+            :root {
+                --bg: #ffffff;
+                --bg-card: #f8fafc;
+                --bg-alt: #f1f5f9;
+                --border: #e2e8f0;
+                --text: #0f172a;
+                --subtext: #64748b;
+                --accent: #0ea5e9;
+                --user: #22c55e;
+                --speaker: #818cf8;
+            }
+            body {
+                font-family: system-ui;
+                background: var(--bg);
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                justify-content: center;
+            }
+            .wrapper {
+                width: 100%;
+                max-width: 900px;
+            }
+            #micButton {
+                padding: 10px 20px;
+                border-radius: 50px;
+                font-size: 1rem;
+                cursor: pointer;
+                border: none;
+                margin-bottom: 8px;
+            }
+            #micButton.listening {
+                background: var(--user);
+                color: #fff;
+            }
+            #micButton.thinking {
+                background: var(--accent);
+                color: #fff;
+            }
+            #micButton.speaking {
+                background: var(--speaker);
+                color: #fff;
+            }
+            #status {
+                font-size: 0.85rem;
+                color: var(--subtext);
+            }
+            .chat {
+                background: var(--bg-alt);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 12px;
+                height: 420px;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                margin-top: 10px;
+            }
+            .msg {
+                padding: 8px 12px;
+                border-radius: 12px;
+                max-width: 75%;
+                white-space: pre-wrap;
+            }
+            .msg.user {
+                background: var(--user);
+                color: white;
+                margin-left: auto;
+            }
+            .msg.assistant {
+                background: white;
+                border: 1px solid var(--border);
+                color: var(--text);
+            }
+            .msg.typing {
+                opacity: 0.7;
+                font-style: italic;
+            }
+        </style>
+    </head>
 
-<body>
-  <button id="mic">🎙 Tap to Speak</button>
-  <div id="status">Ready</div>
+    <body>
+        <div class="wrapper">
+            <button id="micButton" class="listening">Tap to Speak</button>
+            <div id="status">Connecting...</div>
 
-<script>
-/* ================= STATE ================= */
-let ws;
-let micOn = false;
-let audioCtx, processor, micStream;
+            <div id="chat" class="chat"></div>
+        </div>
 
-let playCtx = null;
-let playQueue = [];
-let playing = false;
+        <script>
+            /* GLOBALS */
+            let ws,
+                audioCtx,
+                scriptNode,
+                mediaStream;
+            let micOn = false;
+            let playQueue = [];
+            let playing = false;
+            let playCtx = null;
+            let assistantDraft = "";
+            let userDraft = "";
+            let state = "idle";
+            let audioChunks = 0;
 
-const streamSid = "browser-" + Date.now();
+            // Typing indicator elements (created dynamically)
+            let userTypingEl = null;
+            let aiTypingEl = null;
 
-/* ================= UI ================= */
-const micBtn = document.getElementById("mic");
-const statusEl = document.getElementById("status");
+            /* DOM */
+            const micButton = document.getElementById("micButton");
+            const statusEl = document.getElementById("status");
+            const chatEl = document.getElementById("chat");
 
-/* ================= WS ================= */
-function connectWS() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
+            /* WebSocket */
+            let wsPath = "/exotel-media"; // default, will be fetched from server
 
-  ws = new WebSocket(
-    (location.protocol === "https:" ? "wss://" : "ws://") +
-    location.host +
-    "/exotel-media"
-  );
+            async function init() {
+                // Fetch WebSocket path from server config
+                try {
+                    const res = await fetch("/api/config");
+                    const config = await res.json();
+                    wsPath = config.wsPath || wsPath;
+                } catch (e) {
+                    console.warn("Could not fetch config, using default path");
+                }
+                connectWS();
+            }
 
-  ws.onmessage = e => route(JSON.parse(e.data));
-}
+            function connectWS() {
+                if (ws && ws.readyState === 1)
+                    return;
 
-connectWS();
+                const u = (
+                    location.protocol === "https:"
+                    ? "wss:"
+                    : "ws:") + "//" + location.host + wsPath;
 
-/* ================= MIC ================= */
-micBtn.onclick = () => micOn ? stopMic() : startMic();
+                ws = new WebSocket(u);
 
-async function startMic() {
-  micOn = true;
-  micBtn.textContent = "⏹ Stop";
-  statusEl.textContent = "Listening";
+                ws.onopen = () => setStatus("Ready");
+                ws.onclose = () => setStatus("Disconnected");
+                ws.onerror = () => setStatus("WS Error");
+                ws.onmessage = (ev) => route(JSON.parse(ev.data));
+            }
+            init();
 
-  connectWS();
+            /* State + UI */
+            function setStatus(txt) {
+                statusEl.textContent = txt;
+            }
 
-  ws.send(JSON.stringify({
-    event: "start",
-    stream_sid: streamSid
-  }));
+            function setMicState(newState) {
+                state = newState;
+                micButton.className = newState;
+                if (newState === "listening")
+                    micButton.textContent = "Listening...";
+                if (newState === "thinking")
+                    micButton.textContent = "Thinking...";
+                if (newState === "speaking")
+                    micButton.textContent = "Speaking...";
+            }
 
-  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            /* Chat UI */
+            function addMsg(role, text) {
+                const d = document.createElement("div");
+                d.className = "msg " + role;
+                d.textContent = text;
+                chatEl.appendChild(d);
+                chatEl.scrollTop = chatEl.scrollHeight;
+            }
 
-  audioCtx = new AudioContext({ sampleRate: 8000 });
-  await audioCtx.resume();
+            function showUserTyping(text) {
+                if (!userTypingEl) {
+                    userTypingEl = document.createElement("div");
+                    userTypingEl.className = "msg user typing";
+                    chatEl.appendChild(userTypingEl);
+                }
+                userTypingEl.textContent = text;
+                chatEl.scrollTop = chatEl.scrollHeight;
+            }
 
-  const src = audioCtx.createMediaStreamSource(micStream);
-  processor = audioCtx.createScriptProcessor(2048, 1, 1);
+            function hideUserTyping() {
+                if (userTypingEl) {
+                    userTypingEl.remove();
+                    userTypingEl = null;
+                }
+            }
 
-  processor.onaudioprocess = e => {
-    if (!micOn) return;
+            function showAiTyping(text) {
+                if (!aiTypingEl) {
+                    aiTypingEl = document.createElement("div");
+                    aiTypingEl.className = "msg assistant typing";
+                    chatEl.appendChild(aiTypingEl);
+                }
+                aiTypingEl.textContent = text;
+                chatEl.scrollTop = chatEl.scrollHeight;
+            }
 
-    const input = e.inputBuffer.getChannelData(0);
-    const pcm16 = floatToPCM16(input);
+            function hideAiTyping() {
+                if (aiTypingEl) {
+                    aiTypingEl.remove();
+                    aiTypingEl = null;
+                }
+            }
 
-    ws.send(JSON.stringify({
-      event: "media",
-      stream_sid: streamSid,
-      media: { payload: pcm16ToBase64(pcm16) }
-    }));
-  };
+            /* Audio mic */
+            async function toggleMic() {
+                if (!micOn)
+                    startMic();
+                else
+                    stopMic();
+            }
 
-  src.connect(processor);
-  processor.connect(audioCtx.destination);
-}
+            async function startMic() {
+                connectWS();
+                if (micOn)
+                    return;
 
-function stopMic() {
-  micOn = false;
-  micBtn.textContent = "🎙 Tap to Speak";
-  statusEl.textContent = "Processing";
+                if (playing)
+                    interruptPlayback();
 
-  ws.send(JSON.stringify({
-    event: "stop",
-    stream_sid: streamSid
-  }));
+                mediaStream = await navigator
+                    .mediaDevices
+                    .getUserMedia({audio: true});
+                audioCtx = new AudioContext({sampleRate: 24000});
+                const src = audioCtx.createMediaStreamSource(mediaStream);
+                scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
 
-  processor?.disconnect();
-  audioCtx?.close();
-  micStream?.getTracks().forEach(t => t.stop());
-}
+                scriptNode.onaudioprocess = (ev) => {
+                    if (!micOn)
+                        return;
+                    if (!ws || ws.readyState !== WebSocket.OPEN)
+                        return;
 
-/* ================= ROUTER ================= */
-function route(msg) {
-  if (msg.event === "media" && msg.media?.payload) {
-    const pcm = base64ToPCM16(msg.media.payload);
-    const float32 = pcm16ToFloat32(pcm);
-    queue(float32);
-  }
-}
+                    const input = ev
+                        .inputBuffer
+                        .getChannelData(0);
+                    const pcm = floatToPCM(input);
+                    ws.send(JSON.stringify({type: "audio", audio: pcmBase64(pcm)}));
+                    audioChunks++;
+                };
 
-/* ================= PLAYBACK ================= */
-function queue(samples) {
-  playQueue.push(samples);
-  if (!playing) playNext();
-}
+                src.connect(scriptNode);
+                scriptNode.connect(audioCtx.destination);
 
-async function playNext() {
-  if (!playQueue.length) {
-    playing = false;
-    statusEl.textContent = "Ready";
-    return;
-  }
+                micOn = true;
+                audioChunks = 0;
+                setMicState("listening");
+                setStatus("Listening...");
+            }
 
-  playing = true;
-  statusEl.textContent = "Speaking 🔊";
+            function stopMic() {
+                micOn = false;
 
-  if (!playCtx) {
-    playCtx = new AudioContext({ sampleRate: 8000 });
-  }
-  if (playCtx.state === "suspended") {
-    await playCtx.resume();
-  }
+                // only send "audio_end" if we actually streamed some audio
+                if (ws && ws.readyState === WebSocket.OPEN && audioChunks > 0) {
+                    ws.send(JSON.stringify({type: "audio_end"}));
+                }
+                audioChunks = 0;
 
-  const samples = playQueue.shift();
-  const buf = playCtx.createBuffer(1, samples.length, 8000);
-  buf.getChannelData(0).set(samples);
+                if (scriptNode)
+                    scriptNode.disconnect();
+                scriptNode = null;
 
-  const src = playCtx.createBufferSource();
-  src.buffer = buf;
-  src.connect(playCtx.destination);
-  src.start();
-  src.onended = playNext;
-}
+                if (audioCtx)
+                    audioCtx.close();
+                audioCtx = null;
 
-/* ================= AUDIO UTILS ================= */
-function floatToPCM16(f) {
-  const out = new Int16Array(f.length);
-  for (let i = 0; i < f.length; i++) {
-    const s = Math.max(-1, Math.min(1, f[i]));
-    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  return out;
-}
+                if (mediaStream) {
+                    mediaStream
+                        .getTracks()
+                        .forEach((t) => t.stop());
+                    mediaStream = null;
+                }
 
-function pcm16ToBase64(pcm) {
-  return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
-}
+                setMicState("thinking");
+                setStatus("Processing...");
+            }
 
-function base64ToPCM16(b64) {
-  const bin = atob(b64);
-  const buf = new Int16Array(bin.length / 2);
-  for (let i = 0; i < buf.length; i++) {
-    buf[i] = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
-  }
-  return buf;
-}
+            micButton.addEventListener("click", toggleMic);
 
-function pcm16ToFloat32(pcm) {
-  const out = new Float32Array(pcm.length);
-  for (let i = 0; i < pcm.length; i++) {
-    out[i] = pcm[i] / 32768;
-  }
-  return out;
-}
-</script>
-</body>
+            /* Audio Playback */
+            function queue(samples) {
+                playQueue.push(samples);
+                if (!playing)
+                    playNext();
+            }
+
+            function playNext() {
+                if (!playQueue.length) {
+                    playing = false;
+                    setMicState("listening");
+                    return;
+                }
+
+                playing = true;
+                setMicState("speaking");
+
+                if (!playCtx)
+                    playCtx = new AudioContext({sampleRate: 24000});
+
+                const samp = playQueue.shift();
+                const buf = playCtx.createBuffer(1, samp.length, 24000);
+                buf
+                    .getChannelData(0)
+                    .set(samp);
+                const src = playCtx.createBufferSource();
+                src.buffer = buf;
+                src.connect(playCtx.destination);
+                src.start();
+                src.onended = () => {
+                    playing = false;
+                    playNext();
+                };
+            }
+
+            function interruptPlayback() {
+                playQueue = [];
+                playing = false;
+                setMicState("listening");
+            }
+
+            /* Decode AI Events */
+            function route(msg) {
+                if (msg.type === "ai")
+                    handleAI(msg.evt);
+                if (msg.type === "ready")
+                    setStatus("Ready - Tap to Speak");
+                if (msg.type === "error")
+                    console.error("AI error:", msg.errInfo || msg);
+            }
+
+            function handleAI(e) {
+                if (!e || !e.type)
+                    return;
+                const t = e.type;
+
+                // Audio playback
+                if (t === "response.output_audio.delta") {
+                    const f = base64ToFloat(e.delta);
+                    queue(f);
+                }
+
+                // AI transcript (real-time typing)
+                if (t === "response.output_text.delta") {
+                    assistantDraft += e.delta;
+                    showAiTyping(assistantDraft);
+                }
+
+                // AI transcript complete
+                if (t === "response.output_text.done") {
+                    hideAiTyping();
+                    if (assistantDraft.trim()) {
+                        addMsg("assistant", assistantDraft.trim());
+                    }
+                    assistantDraft = "";
+                }
+
+                // Response complete
+                if (t === "response.completed") {
+                    hideAiTyping();
+                    if (assistantDraft.trim()) {
+                        addMsg("assistant", assistantDraft.trim());
+                    }
+                    assistantDraft = "";
+                    setMicState("listening");
+                    setStatus("Ready - Tap to Speak");
+                }
+
+                // User transcript (real-time typing)
+                if (t === "conversation.item.input_audio_transcription.delta") {
+                    userDraft += e.delta;
+                    showUserTyping(userDraft);
+                }
+
+                // User transcript complete
+                if (t === "conversation.item.input_audio_transcription.completed") {
+                    hideUserTyping();
+                    if (e.transcript && e.transcript.trim()) {
+                        addMsg("user", e.transcript.trim());
+                    } else if (userDraft.trim()) {
+                        addMsg("user", userDraft.trim());
+                    }
+                    userDraft = "";
+                }
+            }
+
+            /* Utils */
+            function floatToPCM(f) {
+                const out = new Int16Array(f.length);
+                for (let i = 0; i < f.length; i++) {
+                    const s = Math.max(-1, Math.min(1, f[i]));
+                    out[i] = s < 0
+                        ? s * 0x8000
+                        : s * 0x7fff;
+                }
+                return out;
+            }
+
+            function pcmBase64(pcm) {
+                return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
+            }
+
+            function base64ToFloat(b) {
+                const bin = atob(b);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++)
+                    bytes[i] = bin.charCodeAt(i);
+                const dv = new DataView(bytes.buffer);
+                const len = bytes.byteLength / 2;
+                const out = new Float32Array(len);
+                for (let i = 0; i < len; i++) {
+                    out[i] = dv.getInt16(i * 2, true) / 0x8000;
+                }
+                return out;
+            }
+        </script>
+    </body>
 </html>
