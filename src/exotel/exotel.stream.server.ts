@@ -2,17 +2,54 @@ import { Server } from "http"
 import { WebSocketServer } from "ws"
 import { OpenAIRealtimeConnection } from "./open-ai/openaiRealtime"
 
-function log(streamSid: string | null, ...args: any[]) {
-  console.log(new Date().toISOString(), `[STREAM ${streamSid ?? "-"}]`, ...args)
+/* ===================================================== */
+/* PCM16 → G711 μ-law (CORRECT ITU-T) */
+/* ===================================================== */
+
+function pcm16ToG711(base64Pcm: string): string {
+  const pcm = Buffer.from(base64Pcm, "base64")
+  const out = Buffer.alloc(pcm.length / 2)
+
+  for (let i = 0; i < out.length; i++) {
+    const sample = pcm.readInt16LE(i * 2)
+    out[i] = linearToMulaw(sample)
+  }
+
+  return out.toString("base64")
 }
 
-export function createExotelStreamServer(server: Server, path = "/exotel-media") {
+function linearToMulaw(sample: number): number {
+  const MAX = 32635
+  let sign = 0
+
+  if (sample < 0) {
+    sign = 0x80
+    sample = -sample
+  }
+
+  if (sample > MAX) sample = MAX
+  sample += 132
+
+  let exponent = 7
+  for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; expMask >>= 1) {
+    exponent--
+  }
+
+  const mantissa = (sample >> (exponent + 3)) & 0x0f
+  return ~(sign | (exponent << 4) | mantissa) & 0xff
+}
+
+/* ===================================================== */
+/* EXOTEL STREAM SERVER */
+/* ===================================================== */
+
+export function createExotelStreamServer(server: Server) {
   const wss = new WebSocketServer({ noServer: true })
 
   server.on("upgrade", (req, socket, head) => {
-    if (req.url?.split("?")[0] === path) {
+    if (req.url === "/exotel-media") {
       wss.handleUpgrade(req, socket, head, ws => {
-        wss.emit("connection", ws, req)
+        wss.emit("connection", ws)
       })
     } else {
       socket.destroy()
@@ -20,34 +57,20 @@ export function createExotelStreamServer(server: Server, path = "/exotel-media")
   })
 
   wss.on("connection", ws => {
-    let streamSid: string | null = null
-    let lastCommit = Date.now()
+    let streamSid = ""
 
     const ai = new OpenAIRealtimeConnection(
-      evt => {
-        /* 🎧 SEND AI AUDIO BACK */
-        if (evt.type === "assistant_audio" && streamSid) {
-          ws.send(JSON.stringify({
-            event: "media",
-            stream_sid: streamSid,
-            media: { payload: evt.audio }
-          }))
-        }
-
-        /* 📝 USER TRANSCRIPT */
-        if (evt.type === "user_transcript") {
-          log(streamSid, "👤 USER SAID:", evt.text)
-          ws.send(JSON.stringify(evt))
-        }
-
-        /* 🤖 ASSISTANT TRANSCRIPT */
-        if (evt.type === "assistant_text") {
-          log(streamSid, "🤖 AI SAID:", evt.text)
-          ws.send(JSON.stringify(evt))
-        }
+      pcmBase64 => {
+        ws.send(JSON.stringify({
+          event: "media",
+          stream_sid: streamSid,
+          media: {
+            payload: pcm16ToG711(pcmBase64),
+          },
+        }))
       },
-      () => log(streamSid, "🤖 OPENAI READY"),
-      err => log(streamSid, "❌ OPENAI ERROR", err)
+      text => console.log("👤 USER:", text),
+      text => console.log("🤖 AI:", text)
     )
 
     ws.on("message", raw => {
@@ -55,27 +78,19 @@ export function createExotelStreamServer(server: Server, path = "/exotel-media")
 
       if (msg.event === "start") {
         streamSid = msg.stream_sid
-        log(streamSid, "📞 STREAM STARTED")
+        console.log("📞 CALL START", streamSid)
       }
 
       if (msg.event === "media" && msg.media?.payload) {
         ai.sendAudio(msg.media.payload)
-
-        if (Date.now() - lastCommit > 3000) {
-          ai.endAudio()
-          lastCommit = Date.now()
-        }
       }
 
       if (msg.event === "stop") {
-        log(streamSid, "🛑 STREAM STOP")
+        console.log("📞 CALL STOP", streamSid)
         ai.endAudio()
       }
     })
 
-    ws.on("close", () => {
-      log(streamSid, "❎ WS CLOSED")
-      ai.close()
-    })
+    ws.on("close", () => ai.close())
   })
 }
