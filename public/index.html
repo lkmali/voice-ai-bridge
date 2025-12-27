@@ -2,13 +2,28 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Realtime Voice AI</title>
+  <title>Exotel Voice AI Test</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <style>
-    body { font-family: system-ui; background:#f8fafc; padding:20px }
-    button { padding:12px 24px; border-radius:999px; background:#22c55e; color:white; border:none }
-    #status { margin-top:8px; color:#64748b }
+    body {
+      font-family: system-ui;
+      background: #f8fafc;
+      padding: 20px;
+    }
+    button {
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 999px;
+      border: none;
+      background: #22c55e;
+      color: white;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 8px;
+      color: #64748b;
+    }
   </style>
 </head>
 
@@ -18,157 +33,162 @@
 
 <script>
 /* ================= STATE ================= */
-let ws, micOn=false
-let audioCtx, micStream, processor
-let playCtx = null
-let playQueue = []
-let playing = false
-const streamSid = "browser-" + Date.now()
+let ws;
+let micOn = false;
+let audioCtx, processor, micStream;
+
+let playCtx = null;
+let playQueue = [];
+let playing = false;
+
+const streamSid = "browser-" + Date.now();
 
 /* ================= UI ================= */
-const micBtn = document.getElementById("mic")
-const statusEl = document.getElementById("status")
+const micBtn = document.getElementById("mic");
+const statusEl = document.getElementById("status");
 
 /* ================= WS ================= */
 function connectWS() {
-  if (ws?.readyState === WebSocket.OPEN) return
+  if (ws && ws.readyState === WebSocket.OPEN) return;
 
   ws = new WebSocket(
     (location.protocol === "https:" ? "wss://" : "ws://") +
-    location.host + "/exotel-media"
-  )
+    location.host +
+    "/exotel-media"
+  );
 
-  ws.onmessage = e => route(JSON.parse(e.data))
+  ws.onmessage = e => route(JSON.parse(e.data));
 }
-connectWS()
+
+connectWS();
 
 /* ================= MIC ================= */
-micBtn.onclick = () => micOn ? stopMic() : startMic()
+micBtn.onclick = () => micOn ? stopMic() : startMic();
 
 async function startMic() {
-  micOn = true
-  micBtn.textContent = "⏹ Stop"
-  statusEl.textContent = "Listening"
-  connectWS()
+  micOn = true;
+  micBtn.textContent = "⏹ Stop";
+  statusEl.textContent = "Listening";
 
-  ws.send(JSON.stringify({ event:"start", stream_sid:streamSid }))
+  connectWS();
 
-  micStream = await navigator.mediaDevices.getUserMedia({ audio:true })
-  audioCtx = new AudioContext({ sampleRate:24000 })
-  await audioCtx.resume()
+  ws.send(JSON.stringify({
+    event: "start",
+    stream_sid: streamSid
+  }));
 
-  const src = audioCtx.createMediaStreamSource(micStream)
-  processor = audioCtx.createScriptProcessor(2048,1,1)
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  audioCtx = new AudioContext({ sampleRate: 8000 });
+  await audioCtx.resume();
+
+  const src = audioCtx.createMediaStreamSource(micStream);
+  processor = audioCtx.createScriptProcessor(2048, 1, 1);
 
   processor.onaudioprocess = e => {
-    if (!micOn) return
-    const input = e.inputBuffer.getChannelData(0)
-    const pcm = floatToPCM16(downsample(input, audioCtx.sampleRate, 8000))
+    if (!micOn) return;
+
+    const input = e.inputBuffer.getChannelData(0);
+    const pcm16 = floatToPCM16(input);
 
     ws.send(JSON.stringify({
-      event:"media",
-      stream_sid:streamSid,
-      media:{ payload: pcmToBase64(pcm) }
-    }))
-  }
+      event: "media",
+      stream_sid: streamSid,
+      media: { payload: pcm16ToBase64(pcm16) }
+    }));
+  };
 
-  src.connect(processor)
-  processor.connect(audioCtx.destination)
+  src.connect(processor);
+  processor.connect(audioCtx.destination);
 }
 
 function stopMic() {
-  micOn = false
-  micBtn.textContent = "🎙 Tap to Speak"
-  statusEl.textContent = "Processing"
-  ws.send(JSON.stringify({ event:"stop", stream_sid:streamSid }))
-  processor?.disconnect()
-  audioCtx?.close()
-  micStream?.getTracks().forEach(t=>t.stop())
+  micOn = false;
+  micBtn.textContent = "🎙 Tap to Speak";
+  statusEl.textContent = "Processing";
+
+  ws.send(JSON.stringify({
+    event: "stop",
+    stream_sid: streamSid
+  }));
+
+  processor?.disconnect();
+  audioCtx?.close();
+  micStream?.getTracks().forEach(t => t.stop());
 }
 
 /* ================= ROUTER ================= */
 function route(msg) {
   if (msg.event === "media" && msg.media?.payload) {
-    const ulaw = base64ToUint8(msg.media.payload)
-    const pcm = ulawToFloat32(ulaw)
-    queue(pcm)
+    const pcm = base64ToPCM16(msg.media.payload);
+    const float32 = pcm16ToFloat32(pcm);
+    queue(float32);
   }
 }
 
 /* ================= PLAYBACK ================= */
 function queue(samples) {
-  playQueue.push(samples)
-  if (!playing) playNext()
+  playQueue.push(samples);
+  if (!playing) playNext();
 }
 
 async function playNext() {
   if (!playQueue.length) {
-    playing = false
-    statusEl.textContent = "Ready"
-    return
+    playing = false;
+    statusEl.textContent = "Ready";
+    return;
   }
 
-  playing = true
-  statusEl.textContent = "Speaking 🔊"
+  playing = true;
+  statusEl.textContent = "Speaking 🔊";
 
-  if (!playCtx) playCtx = new AudioContext({ sampleRate:8000 })
-  if (playCtx.state === "suspended") await playCtx.resume()
+  if (!playCtx) {
+    playCtx = new AudioContext({ sampleRate: 8000 });
+  }
+  if (playCtx.state === "suspended") {
+    await playCtx.resume();
+  }
 
-  const samples = playQueue.shift()
-  const buf = playCtx.createBuffer(1, samples.length, 8000)
-  buf.getChannelData(0).set(samples)
+  const samples = playQueue.shift();
+  const buf = playCtx.createBuffer(1, samples.length, 8000);
+  buf.getChannelData(0).set(samples);
 
-  const src = playCtx.createBufferSource()
-  src.buffer = buf
-  src.connect(playCtx.destination)
-  src.start()
-  src.onended = playNext
+  const src = playCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playCtx.destination);
+  src.start();
+  src.onended = playNext;
 }
 
 /* ================= AUDIO UTILS ================= */
-function downsample(buf, inRate, outRate) {
-  const ratio = inRate / outRate
-  const len = Math.round(buf.length / ratio)
-  const out = new Float32Array(len)
-  let pos = 0
-  for (let i=0;i<len;i++) {
-    const next = Math.round((i+1)*ratio)
-    let sum=0,count=0
-    for (;pos<next && pos<buf.length;pos++){sum+=buf[pos];count++}
-    out[i]=sum/count
-  }
-  return out
-}
-
 function floatToPCM16(f) {
-  const out = new Int16Array(f.length)
-  for (let i=0;i<f.length;i++){
-    const s=Math.max(-1,Math.min(1,f[i]))
-    out[i]=s<0?s*0x8000:s*0x7fff
+  const out = new Int16Array(f.length);
+  for (let i = 0; i < f.length; i++) {
+    const s = Math.max(-1, Math.min(1, f[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
-  return out
+  return out;
 }
 
-function pcmToBase64(pcm){
-  return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)))
+function pcm16ToBase64(pcm) {
+  return btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)));
 }
 
-function base64ToUint8(b64){
-  return Uint8Array.from(atob(b64), c=>c.charCodeAt(0))
-}
-
-/* 🔥 g711 μ-law decoder */
-function ulawToFloat32(ulaw) {
-  const out = new Float32Array(ulaw.length)
-  for (let i=0;i<ulaw.length;i++) {
-    let u = ~ulaw[i]
-    let sign = u & 0x80
-    let exp = (u >> 4) & 0x07
-    let mant = u & 0x0F
-    let sample = ((mant<<1)+1)<< (exp+2)
-    out[i] = (sign?-sample:sample)/32768
+function base64ToPCM16(b64) {
+  const bin = atob(b64);
+  const buf = new Int16Array(bin.length / 2);
+  for (let i = 0; i < buf.length; i++) {
+    buf[i] = bin.charCodeAt(i * 2) | (bin.charCodeAt(i * 2 + 1) << 8);
   }
-  return out
+  return buf;
+}
+
+function pcm16ToFloat32(pcm) {
+  const out = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    out[i] = pcm[i] / 32768;
+  }
+  return out;
 }
 </script>
 </body>

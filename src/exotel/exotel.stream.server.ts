@@ -2,7 +2,8 @@ import { WebSocketServer } from "ws";
 import { OpenAIRealtime } from "./open-ai/openaiRealtime";
 import { Server } from "http";
 
-const SILENCE_PCM16 = Buffer.alloc(320, 0).toString("base64"); // 20ms silence
+// 20ms silence (320 bytes PCM16)
+const SILENCE = Buffer.alloc(320, 0).toString("base64");
 
 export function createExotelStreamServer(server: Server, path: string) {
   const wss = new WebSocketServer({ noServer: true });
@@ -16,29 +17,32 @@ export function createExotelStreamServer(server: Server, path: string) {
   });
 
   wss.on("connection", ws => {
-    let streamSid = "";
-    let silenceTimer: NodeJS.Timeout;
+    let streamSid: string | null = null;
 
     const ai = new OpenAIRealtime(
-      pcm16 => {
+      pcm => {
+        if (!streamSid) return;
         ws.send(JSON.stringify({
           event: "media",
           stream_sid: streamSid,
-          media: { payload: pcm16 }
+          media: { payload: pcm },
         }));
       },
-      text => console.log("👤 USER:", text),
-      text => console.log("🤖 AI:", text),
-      () => console.log("🛑 BARGE-IN")
+      t => console.log("👤 USER:", t),
+      t => console.log("🤖 AI:", t),
+      () => {
+        console.log("🛑 BARGE-IN");
+        ws.send(JSON.stringify({ event: "clear", stream_sid: streamSid }));
+      }
     );
 
-    // Silence padding (prevents auto hangup)
-    silenceTimer = setInterval(() => {
+    // Silence padding — REQUIRED
+    const silenceTimer = setInterval(() => {
       if (!streamSid) return;
       ws.send(JSON.stringify({
         event: "media",
         stream_sid: streamSid,
-        media: { payload: SILENCE_PCM16 }
+        media: { payload: SILENCE },
       }));
     }, 200);
 
@@ -56,8 +60,8 @@ export function createExotelStreamServer(server: Server, path: string) {
 
       if (msg.event === "stop") {
         console.log("📞 CALL STOP", streamSid);
-        clearInterval(silenceTimer);
-        ai.close();
+        ai.endTurn();
+        streamSid = null;
       }
     });
 
