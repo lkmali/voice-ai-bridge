@@ -1,5 +1,5 @@
 import WebSocket from "ws"
-import { OPENAI_REALTIME_MODEL, OPENAI_API_KEY } from "../../config"
+import { OPENAI_REALTIME_MODEL, OPENAI_API_KEY, OPENAI_PROMPT_ID, OPENAI_PROMPT_VERSION } from "../../config"
 
 export class OpenAIRealtime {
   private ws: WebSocket
@@ -20,7 +20,9 @@ export class OpenAIRealtime {
     private onSpeechStopped?: () => void
   ) {
     this.ws = new WebSocket(
-      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_REALTIME_MODEL)}`,
+      `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(
+        OPENAI_REALTIME_MODEL
+      )}`,
       {
         headers: {
           Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -45,22 +47,22 @@ export class OpenAIRealtime {
           output_audio_format: "pcm16",
 
           // Server VAD for speech detection + barge-in
-          // create_response: false = we manually commit and create response
+          // create_response: true = VAD automatically commits buffer and creates response
           turn_detection: {
             type: "server_vad",
             threshold: 0.5,
             prefix_padding_ms: 300,
             silence_duration_ms: 500,
-            create_response: false,
+            create_response: true,
           },
 
           input_audio_transcription: {
             model: "gpt-4o-transcribe",
-            language: "en",
           },
-
-          instructions:
-            "You are a professional call-center voice assistant. Speak English only. Keep answers short and clear.",
+          prompt: {
+            id: OPENAI_PROMPT_ID,
+            version: OPENAI_PROMPT_VERSION,
+          },
         },
       })
     })
@@ -147,9 +149,10 @@ export class OpenAIRealtime {
   }
 
   endTurn() {
+    // With create_response: true, the server VAD automatically commits and creates response
+    // This method is kept for manual triggering if needed (e.g., HTML client)
     if (!this.hasAudio) return
     this.send({ type: "input_audio_buffer.commit" })
-    // Only create response if not already active
     if (!this.activeResponseId) {
       this.send({ type: "response.create" })
     }
@@ -157,10 +160,15 @@ export class OpenAIRealtime {
   }
 
   cancelResponse() {
-    this.send({ type: "response.cancel" })
+    // Only cancel if there's an active response
+    if (this.activeResponseId) {
+      this.send({ type: "response.cancel" })
+    }
+    // Clear audio buffer to stop any pending audio from being processed
     this.send({ type: "input_audio_buffer.clear" })
     this.speaking = false
     this.activeResponseId = null
+    this.hasAudio = false
   }
 
   close() {

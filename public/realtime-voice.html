@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenAI Realtime Voice</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+    .container {
+      max-width: 600px;
+      width: 90%;
+      padding: 2rem;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 1rem;
+      font-size: 1.8rem;
+    }
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-bottom: 2rem;
+      font-size: 0.9rem;
+    }
+    .status {
+      text-align: center;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      background: rgba(255,255,255,0.1);
+    }
+    .status.connected { background: rgba(0, 200, 83, 0.2); }
+    .status.speaking { background: rgba(255, 193, 7, 0.2); }
+    .status.ai-speaking { background: rgba(33, 150, 243, 0.2); }
+
+
+    .controls {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      margin-bottom: 2rem;
+    }
+    button {
+      padding: 1rem 2rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 50px;
+      cursor: pointer;
+      transition: all 0.3s;
+      font-weight: 600;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-start {
+      background: linear-gradient(135deg, #00c853 0%, #00e676 100%);
+      color: #000;
+    }
+    .btn-start:hover:not(:disabled) {
+      transform: scale(1.05);
+      box-shadow: 0 4px 20px rgba(0, 200, 83, 0.4);
+    }
+    .btn-stop {
+      background: linear-gradient(135deg, #ff1744 0%, #ff5252 100%);
+      color: #fff;
+    }
+    .btn-stop:hover:not(:disabled) {
+      transform: scale(1.05);
+      box-shadow: 0 4px 20px rgba(255, 23, 68, 0.4);
+    }
+
+    .visualizer {
+      height: 60px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      overflow: hidden;
+    }
+    .bar {
+      width: 4px;
+      background: #00c853;
+      border-radius: 2px;
+      transition: height 0.1s;
+    }
+
+    .transcript {
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 1rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .transcript h3 {
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+      color: #888;
+    }
+    .message {
+      padding: 0.5rem 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .message:last-child {
+      border-bottom: none;
+    }
+    .message.user {
+      color: #00e676;
+    }
+    .message.user::before {
+      content: "You: ";
+      font-weight: bold;
+    }
+    .message.ai {
+      color: #64b5f6;
+    }
+    .message.ai::before {
+      content: "AI: ";
+      font-weight: bold;
+    }
+    .message.system {
+      color: #888;
+      font-style: italic;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>OpenAI Realtime Voice</h1>
+    <p class="subtitle">Speak and pause - AI will respond automatically</p>
+
+    <div class="status" id="status">Click Start to begin</div>
+
+    <div class="visualizer" id="visualizer"></div>
+
+    <div class="controls">
+      <button class="btn-start" id="startBtn">Start</button>
+      <button class="btn-stop" id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <h3>Conversation</h3>
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const statusEl = document.getElementById('status');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const transcriptEl = document.getElementById('transcript');
+    const visualizerEl = document.getElementById('visualizer');
+
+    // WebSocket URL - connects directly to local server
+    // Uses the same path as Exotel, server auto-detects client type
+    const WS_URL = `ws://${window.location.host}/exotel-media`;
+
+    // Create visualizer bars
+    for (let i = 0; i < 32; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.height = '4px';
+      visualizerEl.appendChild(bar);
+    }
+    const bars = visualizerEl.querySelectorAll('.bar');
+
+    // State
+    let ws = null;
+    let audioContext = null;
+    let mediaStream = null;
+    let workletNode = null;
+    let isConnected = false;
+    let isSpeaking = false;
+    let isAiSpeaking = false;
+
+    // Audio playback
+    let playbackContext = null;
+    let audioQueue = [];
+    let isPlaying = false;
+
+    function updateStatus(text, className = '') {
+      statusEl.textContent = text;
+      statusEl.className = 'status ' + className;
+    }
+
+    function addMessage(text, type) {
+      const msg = document.createElement('div');
+      msg.className = 'message ' + type;
+      msg.textContent = text;
+      transcriptEl.appendChild(msg);
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    function updateVisualizer(data) {
+      if (!data || data.length === 0) {
+        bars.forEach(bar => bar.style.height = '4px');
+        return;
+      }
+      const step = Math.floor(data.length / bars.length);
+      bars.forEach((bar, i) => {
+        const value = Math.abs(data[i * step] || 0);
+        const height = Math.max(4, Math.min(50, value * 100));
+        bar.style.height = height + 'px';
+        bar.style.background = isAiSpeaking ? '#64b5f6' : '#00c853';
+      });
+    }
+
+    // Convert Float32 to PCM16 base64
+    function float32ToPcm16Base64(float32Array) {
+      const pcm16 = new Int16Array(float32Array.length);
+      for (let i = 0; i < float32Array.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      const bytes = new Uint8Array(pcm16.buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    }
+
+    // Convert PCM16 base64 to Float32 for playback
+    function pcm16Base64ToFloat32(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const pcm16 = new Int16Array(bytes.buffer);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / (pcm16[i] < 0 ? 0x8000 : 0x7FFF);
+      }
+      return float32;
+    }
+
+    // Play audio from AI
+    async function playAudio(pcm16Base64) {
+      if (!playbackContext) {
+        playbackContext = new AudioContext({ sampleRate: 24000 });
+      }
+
+      const float32 = pcm16Base64ToFloat32(pcm16Base64);
+      audioQueue.push(float32);
+
+      if (!isPlaying) {
+        processAudioQueue();
+      }
+    }
+
+    async function processAudioQueue() {
+      if (audioQueue.length === 0) {
+        isPlaying = false;
+        return;
+      }
+
+      isPlaying = true;
+      const float32 = audioQueue.shift();
+
+      const buffer = playbackContext.createBuffer(1, float32.length, 24000);
+      buffer.getChannelData(0).set(float32);
+
+      const source = playbackContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(playbackContext.destination);
+
+      // Visualize AI audio
+      updateVisualizer(float32.slice(0, 128));
+
+      source.onended = () => {
+        processAudioQueue();
+      };
+
+      source.start();
+    }
+
+    function clearAudioQueue() {
+      audioQueue = [];
+      isPlaying = false;
+    }
+
+    async function start() {
+      updateStatus('Connecting...', '');
+      startBtn.disabled = true;
+
+      try {
+        // Get microphone access
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: 24000,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        // Setup audio context for capturing
+        audioContext = new AudioContext({ sampleRate: 24000 });
+
+        // Create AudioWorklet for capturing audio
+        await audioContext.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+          class AudioProcessor extends AudioWorkletProcessor {
+            constructor() {
+              super();
+              this.buffer = [];
+            }
+            process(inputs) {
+              const input = inputs[0];
+              if (input && input[0]) {
+                // Send chunks of ~4096 samples
+                this.buffer.push(...input[0]);
+                if (this.buffer.length >= 4096) {
+                  this.port.postMessage(new Float32Array(this.buffer));
+                  this.buffer = [];
+                }
+              }
+              return true;
+            }
+          }
+          registerProcessor('audio-processor', AudioProcessor);
+        `], { type: 'application/javascript' })));
+
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+        workletNode.port.onmessage = (e) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            const base64 = float32ToPcm16Base64(e.data);
+            // Server expects { type: 'audio', audio: '<base64>' }
+            ws.send(JSON.stringify({
+              type: 'audio',
+              audio: base64
+            }));
+
+            // Visualize input if not AI speaking
+            if (!isAiSpeaking) {
+              updateVisualizer(e.data.slice(0, 128));
+            }
+          }
+        };
+
+        source.connect(workletNode);
+        workletNode.connect(audioContext.destination);
+
+        // Connect directly to local server WebSocket
+        ws = new WebSocket(WS_URL);
+
+        ws.onopen = () => {
+          console.log('WebSocket connected');
+          isConnected = true;
+          updateStatus('Connected - Start speaking!', 'connected');
+          stopBtn.disabled = false;
+          addMessage('Connected to Voice Server', 'system');
+        };
+
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          handleMessage(data);
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          updateStatus('Connection error', '');
+          addMessage('Connection error occurred', 'system');
+        };
+
+        ws.onclose = () => {
+          console.log('WebSocket closed');
+          isConnected = false;
+          updateStatus('Disconnected', '');
+          cleanup();
+        };
+
+      } catch (error) {
+        console.error('Error starting:', error);
+        updateStatus('Error: ' + error.message, '');
+        startBtn.disabled = false;
+      }
+    }
+
+    function handleMessage(msg) {
+      console.log('Received:', msg);
+
+      // Server sends { type: 'ready' } when OpenAI is connected
+      if (msg.type === 'ready') {
+        console.log('OpenAI ready');
+        addMessage('AI ready', 'system');
+        return;
+      }
+
+      // Server sends { type: 'ai', evt: {...} } for AI events
+      if (msg.type === 'ai' && msg.evt) {
+        const evt = msg.evt;
+
+        switch (evt.type) {
+          case 'response.output_audio.delta':
+            isAiSpeaking = true;
+            updateStatus('AI speaking...', 'ai-speaking');
+            if (evt.delta) {
+              playAudio(evt.delta);
+            }
+            break;
+
+          case 'conversation.item.input_audio_transcription.completed':
+            if (evt.transcript) {
+              addMessage(evt.transcript, 'user');
+            }
+            break;
+
+          case 'response.output_text.done':
+            if (evt.text) {
+              addMessage(evt.text, 'ai');
+            }
+            break;
+
+          case 'response.completed':
+            isAiSpeaking = false;
+            updateStatus('Connected - Start speaking!', 'connected');
+            updateVisualizer([]);
+            break;
+        }
+      }
+    }
+
+    function stop() {
+      if (ws) {
+        ws.close();
+      }
+      cleanup();
+    }
+
+    function cleanup() {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+      if (playbackContext) {
+        playbackContext.close();
+        playbackContext = null;
+      }
+      workletNode = null;
+      ws = null;
+      isConnected = false;
+      isSpeaking = false;
+      isAiSpeaking = false;
+      clearAudioQueue();
+      updateVisualizer([]);
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    }
+
+    // Event listeners
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', cleanup);
+  </script>
+</body>
+</html>

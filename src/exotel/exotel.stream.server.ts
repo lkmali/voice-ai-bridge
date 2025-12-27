@@ -140,11 +140,11 @@ export function createStreamServer(server: Server, path: string) {
             )
           }
         },
-        // onSpeechStopped: Auto-trigger response for Exotel when user stops speaking
+        // onSpeechStopped: Called when VAD detects user stopped speaking
+        // With create_response: true, OpenAI automatically commits and creates response
         () => {
           if (clientType === "exotel") {
-            console.log("[EXOTEL] User stopped speaking, triggering AI response")
-            ai?.endTurn()
+            console.log("[EXOTEL] User stopped speaking (VAD will auto-respond)")
           }
         }
       )
