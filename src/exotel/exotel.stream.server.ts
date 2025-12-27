@@ -139,6 +139,13 @@ export function createStreamServer(server: Server, path: string) {
               })
             )
           }
+        },
+        // onSpeechStopped: Auto-trigger response for Exotel when user stops speaking
+        () => {
+          if (clientType === "exotel") {
+            console.log("[EXOTEL] User stopped speaking, triggering AI response")
+            ai?.endTurn()
+          }
         }
       )
 

@@ -16,7 +16,8 @@ export class OpenAIRealtime {
     private onResponseDone?: () => void,
     private onReady?: () => void,
     private onAiTextDelta?: (delta: string) => void,
-    private onUserTextDelta?: (delta: string) => void
+    private onUserTextDelta?: (delta: string) => void,
+    private onSpeechStopped?: () => void
   ) {
     this.ws = new WebSocket(
       `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_REALTIME_MODEL)}`,
@@ -74,6 +75,12 @@ export class OpenAIRealtime {
     if (evt.type === "input_audio_buffer.speech_started" && this.speaking) {
       this.onBargeIn()
       this.cancelResponse()
+      return
+    }
+
+    // User stopped speaking (VAD detected silence)
+    if (evt.type === "input_audio_buffer.speech_stopped") {
+      this.onSpeechStopped?.()
       return
     }
 
