@@ -1,22 +1,17 @@
 import { Server } from "http"
 import { WebSocketServer } from "ws"
 import { OpenAIRealtimeConnection } from "./open-ai/openaiRealtime"
-import { logger } from "../logger"
 
-function ts() {
-  return new Date().toISOString()
+function log(streamSid: string | null, ...args: any[]) {
+  console.log(new Date().toISOString(), `[STREAM ${streamSid ?? "-"}]`, ...args)
 }
 
-export function createExotelStreamServer(
-  server: Server,
-  path = "/exotel-media"
-) {
+export function createExotelStreamServer(server: Server, path = "/exotel-media") {
   const wss = new WebSocketServer({ noServer: true })
 
   server.on("upgrade", (req, socket, head) => {
-    const pathname = req.url?.split("?")[0]
-    if (pathname === path) {
-      wss.handleUpgrade(req, socket, head, (ws) => {
+    if (req.url?.split("?")[0] === path) {
+      wss.handleUpgrade(req, socket, head, ws => {
         wss.emit("connection", ws, req)
       })
     } else {
@@ -24,111 +19,63 @@ export function createExotelStreamServer(
     }
   })
 
-  wss.on("connection", (ws, req) => {
-    console.log(ts(), "📞 EXOTEL WS CONNECTED", req.url)
-
+  wss.on("connection", ws => {
     let streamSid: string | null = null
     let lastCommit = Date.now()
-    const FORCE_COMMIT_MS = 1200
 
     const ai = new OpenAIRealtimeConnection(
-      (evt) => {
-        if (
-          evt.type === "response.output_audio.delta" &&
-          evt.audio &&
-          streamSid
-        ) {
-          console.log(ts(), "🔊 OPENAI → EXOTEL AUDIO", evt.audio.length)
+      evt => {
+        /* 🎧 SEND AI AUDIO BACK */
+        if (evt.type === "assistant_audio" && streamSid) {
+          ws.send(JSON.stringify({
+            event: "media",
+            stream_sid: streamSid,
+            media: { payload: evt.audio }
+          }))
+        }
 
-          ws.send(
-            JSON.stringify({
-              event: "media",
-              stream_sid: streamSid,
-              media: { payload: evt.audio },
-            })
-          )
+        /* 📝 USER TRANSCRIPT */
+        if (evt.type === "user_transcript") {
+          log(streamSid, "👤 USER SAID:", evt.text)
+          ws.send(JSON.stringify(evt))
+        }
+
+        /* 🤖 ASSISTANT TRANSCRIPT */
+        if (evt.type === "assistant_text") {
+          log(streamSid, "🤖 AI SAID:", evt.text)
+          ws.send(JSON.stringify(evt))
         }
       },
-      () => console.log(ts(), "🤖 OPENAI READY"),
-      (err) => console.error(ts(), "❌ OPENAI ERROR", err)
+      () => log(streamSid, "🤖 OPENAI READY"),
+      err => log(streamSid, "❌ OPENAI ERROR", err)
     )
 
-    // Heartbeat to Exotel
-    const pingInterval = setInterval(() => {
-      if (ws.readyState === ws.OPEN) ws.ping()
-    }, 5000)
+    ws.on("message", raw => {
+      const msg = JSON.parse(raw.toString())
 
-    ws.on("message", (raw) => {
-      try {
-        const msg = JSON.parse(raw.toString())
-        console.log(ts(), "📥 EXOTEL → SERVER", msg.event)
+      if (msg.event === "start") {
+        streamSid = msg.stream_sid
+        log(streamSid, "📞 STREAM STARTED")
+      }
 
-        switch (msg.event) {
-          case "connected":
-            console.log(ts(), "🔗 EXOTEL CONNECTED")
-            break
+      if (msg.event === "media" && msg.media?.payload) {
+        ai.sendAudio(msg.media.payload)
 
-          case "start":
-            streamSid = msg.stream_sid
-            console.log(ts(), "▶️ STREAM START", {
-              streamSid,
-              callSid: msg.start?.call_sid,
-              sampleRate: msg.start?.media_format?.sample_rate,
-            })
-            break
-
-          case "media":
-            if (msg.media?.payload) {
-              console.log(
-                ts(),
-                "🎙 EXOTEL AUDIO → OPENAI",
-                msg.media.payload.length
-              )
-
-              ai.sendAudio(msg.media.payload)
-
-              const now = Date.now()
-              if (now - lastCommit > FORCE_COMMIT_MS) {
-                console.log(ts(), "📤 FORCE COMMIT AUDIO")
-                ai.endAudio()
-                lastCommit = now
-              }
-            }
-            break
-
-          case "dtmf":
-            console.log(ts(), "📟 DTMF", msg.dtmf?.digit)
-            break
-
-          case "stop":
-            console.log(ts(), "⏹ EXOTEL STOP", msg.stop?.reason)
-            cleanup()
-            break
+        if (Date.now() - lastCommit > 3000) {
+          ai.endAudio()
+          lastCommit = Date.now()
         }
-      } catch (e) {
-        console.error(ts(), "❌ INVALID EXOTEL PAYLOAD", e)
+      }
+
+      if (msg.event === "stop") {
+        log(streamSid, "🛑 STREAM STOP")
+        ai.endAudio()
       }
     })
 
     ws.on("close", () => {
-      console.log(ts(), "🔌 EXOTEL WS CLOSED")
-      cleanup()
-    })
-
-    ws.on("error", (e) => {
-      console.error(ts(), "❌ EXOTEL WS ERROR", e)
-      cleanup()
-    })
-
-    function cleanup() {
-      clearInterval(pingInterval)
-      ai.endAudio()
+      log(streamSid, "❎ WS CLOSED")
       ai.close()
-      try {
-        ws.close()
-      } catch {}
-    }
+    })
   })
-
-  return wss
 }

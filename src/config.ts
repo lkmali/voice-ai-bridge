@@ -20,3 +20,7 @@ export const EXOTEL_CALL_URL = process.env.EXOTEL_CALL_URL
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ""
 export const OPENAI_REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview-2024-12"
+  export const OPENAI_PROMPT_ID =
+  process.env.OPENAI_PROMPT_ID || "prompt-1234567890"
+export const OPENAI_PROMPT_VERSION =
+  process.env.OPENAI_PROMPT_VERSION || "3"
