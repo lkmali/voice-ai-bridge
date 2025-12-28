@@ -62,8 +62,7 @@ export class OpenAIRealtime {
             model: "gpt-4o-transcribe",
           },
           prompt: {
-            id: OPENAI_PROMPT_ID,
-            version: OPENAI_PROMPT_VERSION,
+            id: OPENAI_PROMPT_ID
           },
         },
       })
