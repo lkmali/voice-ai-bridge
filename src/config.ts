@@ -23,4 +23,4 @@ export const OPENAI_REALTIME_MODEL =
   export const OPENAI_PROMPT_ID =
   process.env.OPENAI_PROMPT_ID || "prompt-1234567890"
 export const OPENAI_PROMPT_VERSION =
-  process.env.OPENAI_PROMPT_VERSION || "4"
+  process.env.OPENAI_PROMPT_VERSION || "5"

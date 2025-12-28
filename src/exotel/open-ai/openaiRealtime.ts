@@ -34,6 +34,8 @@ export class OpenAIRealtime {
     this.ws.on("open", () => {
       this.ready = true
       console.log("🟢 OPENAI READY")
+          console.log("🔄 OPENAI SESSION UPDATE",OPENAI_PROMPT_VERSION)
+    console.log("🔄 OPENAI OPENAI_PROMPT_ID UPDATE",OPENAI_PROMPT_ID)
       this.onReady?.()
 
       this.send({
