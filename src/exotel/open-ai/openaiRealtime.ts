@@ -1,5 +1,10 @@
 import WebSocket from "ws"
-import { OPENAI_REALTIME_MODEL, OPENAI_API_KEY, OPENAI_PROMPT_ID, OPENAI_PROMPT_VERSION } from "../../config"
+import {
+  OPENAI_REALTIME_MODEL,
+  OPENAI_API_KEY,
+  OPENAI_PROMPT_ID,
+  OPENAI_PROMPT_VERSION,
+} from "../../config"
 
 export class OpenAIRealtime {
   private ws: WebSocket
@@ -9,6 +14,7 @@ export class OpenAIRealtime {
   private activeResponseId: string | null = null
 
   constructor(
+    private sessionId: string,
     private onAudio: (pcm16Base64: string) => void,
     private onUserText: (text: string) => void,
     private onAiText: (text: string) => void,
@@ -34,8 +40,8 @@ export class OpenAIRealtime {
     this.ws.on("open", () => {
       this.ready = true
       console.log("🟢 OPENAI READY")
-          console.log("🔄 OPENAI SESSION UPDATE",OPENAI_PROMPT_VERSION)
-    console.log("🔄 OPENAI OPENAI_PROMPT_ID UPDATE",OPENAI_PROMPT_ID)
+      console.log("🔄 OPENAI SESSION UPDATE", OPENAI_PROMPT_ID)
+      console.log("🔄 OPENAI OPENAI_PROMPT_ID UPDATE", this.sessionId)
       this.onReady?.()
 
       this.send({
@@ -62,10 +68,25 @@ export class OpenAIRealtime {
             model: "gpt-4o-transcribe",
           },
           prompt: {
-            id: OPENAI_PROMPT_ID
+            id: OPENAI_PROMPT_ID,
           },
         },
       })
+    })
+
+    // 2️⃣ 🔑 Inject BUSINESS sessionId (SUPPORTED)
+    this.send({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [
+          {
+            type: "text",
+            text: `SESSION_ID=${this.sessionId}`,
+          },
+        ],
+      },
     })
 
     this.ws.on("message", (msg) => this.handle(JSON.parse(msg.toString())))

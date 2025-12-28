@@ -140,34 +140,89 @@
       font-style: italic;
       font-size: 0.85rem;
     }
+    /* Login Section Styles */
+    #loginSection {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+    #loginSection .subtitle {
+      margin-bottom: 1rem;
+    }
+    .input-group {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    #mobileInput {
+      padding: 14px 18px;
+      font-size: 1rem;
+      border-radius: 50px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      width: 240px;
+      outline: none;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    #mobileInput:focus {
+      border-color: #00c853;
+      box-shadow: 0 0 0 3px rgba(0, 200, 83, 0.2);
+    }
+    #mobileInput::placeholder {
+      color: rgba(255, 255, 255, 0.5);
+    }
+    #chatSection {
+      display: none;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>OpenAI Realtime Voice</h1>
-    <p class="subtitle">Speak and pause - AI will respond automatically</p>
 
-    <div class="status" id="status">Click Start to begin</div>
-
-    <div class="visualizer" id="visualizer"></div>
-
-    <div class="controls">
-      <button class="btn-start" id="startBtn">Start</button>
-      <button class="btn-stop" id="stopBtn" disabled>Stop</button>
+    <div id="loginSection">
+      <p class="subtitle">Enter your mobile number to start</p>
+      <div class="input-group">
+        <input type="tel" id="mobileInput" placeholder="Enter mobile number" />
+        <button class="btn-start" id="connectBtn">Connect</button>
+      </div>
     </div>
 
-    <div class="transcript" id="transcript">
-      <h3>Conversation</h3>
+    <div id="chatSection">
+      <p class="subtitle">Speak and pause - AI will respond automatically</p>
+
+      <div class="status" id="status">Click Start to begin</div>
+
+      <div class="visualizer" id="visualizer"></div>
+
+      <div class="controls">
+        <button class="btn-start" id="startBtn">Start</button>
+        <button class="btn-stop" id="stopBtn" disabled>Stop</button>
+      </div>
+
+      <div class="transcript" id="transcript">
+        <h3>Conversation</h3>
+      </div>
     </div>
   </div>
 
   <script>
     // DOM Elements
+    const loginSection = document.getElementById('loginSection');
+    const chatSection = document.getElementById('chatSection');
+    const mobileInput = document.getElementById('mobileInput');
+    const connectBtn = document.getElementById('connectBtn');
     const statusEl = document.getElementById('status');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const transcriptEl = document.getElementById('transcript');
     const visualizerEl = document.getElementById('visualizer');
+
+    // Mobile number
+    let mobileNumber = '';
 
     // WebSocket URL - connects directly to local server
     // Uses the same path as Exotel, server auto-detects client type
@@ -367,6 +422,8 @@
 
         ws.onopen = () => {
           console.log('WebSocket connected');
+          // Send init message with mobile number
+          ws.send(JSON.stringify({ type: 'init', mobileNumber: mobileNumber }));
           isConnected = true;
           updateStatus('Connected - Start speaking!', 'connected');
           stopBtn.disabled = false;
@@ -472,6 +529,17 @@
       startBtn.disabled = false;
       stopBtn.disabled = true;
     }
+
+    // Handle connect button click
+    connectBtn.addEventListener('click', () => {
+      mobileNumber = mobileInput.value.trim();
+      if (!mobileNumber) {
+        alert('Please enter a mobile number');
+        return;
+      }
+      loginSection.style.display = 'none';
+      chatSection.style.display = 'block';
+    });
 
     // Event listeners
     startBtn.addEventListener('click', start);

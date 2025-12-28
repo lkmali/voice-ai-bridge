@@ -28,16 +28,19 @@ export function createStreamServer(server: Server, path: string) {
     // Auto-detect client type from first message
     let clientType: ClientType = "unknown"
     let streamSid: string | null = null
+    let sessionId: string | null = null
     let markCounter = 0
     let ai: OpenAIRealtime | null = null
     let silenceTimer: NodeJS.Timeout | null = null
 
-    function initializeAI(detectedType: ClientType) {
+    function initializeAI(detectedType: ClientType, sid: string) {
       if (ai) return // Already initialized
       clientType = detectedType
-      console.log(`[STREAM] Detected client type: ${clientType.toUpperCase()}`)
+      sessionId = sid
+      console.log(`[STREAM] Detected client type: ${clientType.toUpperCase()}, sessionId: ${sessionId}`)
 
       ai = new OpenAIRealtime(
+        sessionId,
         // onAudio: Receive 24kHz from OpenAI
         (pcm24k) => {
           if (clientType === "exotel") {
@@ -172,12 +175,26 @@ export function createStreamServer(server: Server, path: string) {
         // Auto-detect client type from first message
         if (clientType === "unknown") {
           if (msg.event) {
-            // Exotel uses "event" field
-            initializeAI("exotel")
+            // Exotel uses "event" field - wait for "start" event to get sessionId
+            clientType = "exotel"
           } else if (msg.type) {
             // HTML uses "type" field
-            initializeAI("html")
+            clientType = "html"
           }
+        }
+
+        // For Exotel: initialize AI when we receive the "start" event with call info
+        if (clientType === "exotel" && msg.event === "start" && !ai) {
+          const fromNumber = msg.start?.from || msg.start?.call_sid || msg.stream_sid || `exotel-${Date.now()}`
+          streamSid = msg.stream_sid || msg.start?.stream_sid
+          initializeAI("exotel", fromNumber)
+        }
+
+        // For HTML: initialize AI when we receive the "init" message with mobileNumber
+        if (clientType === "html" && msg.type === "init" && !ai) {
+          const mobileNumber = msg.mobileNumber || `html-${Date.now()}`
+          initializeAI("html", mobileNumber)
+          return
         }
 
         if (!ai) return

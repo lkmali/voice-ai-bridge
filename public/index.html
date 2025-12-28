@@ -85,15 +85,83 @@
                 opacity: 0.7;
                 font-style: italic;
             }
+            /* Login Section Styles */
+            #loginSection {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                min-height: 300px;
+                gap: 16px;
+            }
+            #loginSection h2 {
+                color: var(--text);
+                margin: 0 0 8px 0;
+                font-weight: 600;
+            }
+            #loginSection p {
+                color: var(--subtext);
+                margin: 0 0 16px 0;
+                font-size: 0.9rem;
+            }
+            .input-group {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+            }
+            #mobileInput {
+                padding: 12px 16px;
+                font-size: 1rem;
+                border-radius: 12px;
+                border: 2px solid var(--border);
+                width: 240px;
+                outline: none;
+                transition: border-color 0.2s, box-shadow 0.2s;
+                background: var(--bg-card);
+            }
+            #mobileInput:focus {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15);
+            }
+            #mobileInput::placeholder {
+                color: var(--subtext);
+            }
+            #startBtn {
+                padding: 12px 24px;
+                border-radius: 12px;
+                font-size: 1rem;
+                font-weight: 500;
+                cursor: pointer;
+                border: none;
+                background: var(--accent);
+                color: white;
+                transition: background 0.2s, transform 0.1s;
+            }
+            #startBtn:hover {
+                background: #0284c7;
+            }
+            #startBtn:active {
+                transform: scale(0.98);
+            }
         </style>
     </head>
 
     <body>
         <div class="wrapper">
-            <button id="micButton" class="listening">Tap to Speak</button>
-            <div id="status">Connecting...</div>
+            <div id="loginSection">
+                <h2>Voice AI Assistant</h2>
+                <p>Enter your mobile number to start</p>
+                <div class="input-group">
+                    <input type="tel" id="mobileInput" placeholder="Enter mobile number" />
+                    <button id="startBtn">Start</button>
+                </div>
+            </div>
+            <div id="chatSection" style="display: none;">
+                <button id="micButton" class="listening">Tap to Speak</button>
+                <div id="status">Connecting...</div>
 
-            <div id="chat" class="chat"></div>
+                <div id="chat" class="chat"></div>
+            </div>
         </div>
 
         <script>
@@ -110,12 +178,17 @@
             let userDraft = "";
             let state = "idle";
             let audioChunks = 0;
+            let mobileNumber = "";
 
             // Typing indicator elements (created dynamically)
             let userTypingEl = null;
             let aiTypingEl = null;
 
             /* DOM */
+            const loginSection = document.getElementById("loginSection");
+            const chatSection = document.getElementById("chatSection");
+            const mobileInput = document.getElementById("mobileInput");
+            const startBtn = document.getElementById("startBtn");
             const micButton = document.getElementById("micButton");
             const statusEl = document.getElementById("status");
             const chatEl = document.getElementById("chat");
@@ -132,7 +205,6 @@
                 } catch (e) {
                     console.warn("Could not fetch config, using default path");
                 }
-                connectWS();
             }
 
             function connectWS() {
@@ -146,11 +218,28 @@
 
                 ws = new WebSocket(u);
 
-                ws.onopen = () => setStatus("Ready");
+                ws.onopen = () => {
+                    // Send init message with mobile number as sessionId
+                    ws.send(JSON.stringify({ type: "init", mobileNumber: mobileNumber }));
+                    setStatus("Ready");
+                };
                 ws.onclose = () => setStatus("Disconnected");
                 ws.onerror = () => setStatus("WS Error");
                 ws.onmessage = (ev) => route(JSON.parse(ev.data));
             }
+
+            // Handle start button click
+            startBtn.addEventListener("click", () => {
+                mobileNumber = mobileInput.value.trim();
+                if (!mobileNumber) {
+                    alert("Please enter a mobile number");
+                    return;
+                }
+                loginSection.style.display = "none";
+                chatSection.style.display = "block";
+                connectWS();
+            });
+
             init();
 
             /* State + UI */
