@@ -133,6 +133,9 @@ export class OpenAIRealtime {
       this.onResponseDone?.()
       return
     }
+    if (evt.type === "conversation.item.created") {
+      console.log("📌 Conversation item:", evt.item)
+    }
 
     // User speech transcription delta (real-time)
     if (evt.type === "conversation.item.input_audio_transcription.delta") {
