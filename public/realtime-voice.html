@@ -171,7 +171,8 @@
 
     // WebSocket URL - connects directly to local server
     // Uses the same path as Exotel, server auto-detects client type
-    const WS_URL = `ws://${window.location.host}/exotel-media`;
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const WS_URL = `${wsProtocol}//${window.location.host}/exotel-media`;
 
     // Create visualizer bars
     for (let i = 0; i < 32; i++) {
