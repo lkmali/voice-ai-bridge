@@ -8,3 +8,6 @@ package-lock.json
 yarn-error.log
 yarn.lock
 .env
+n8n_data/
+nginx/ssl/
+nginx/webroot/

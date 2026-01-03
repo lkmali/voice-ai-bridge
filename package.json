@@ -2,6 +2,7 @@
     "name": "voice-ai-exotel-bridge",
     "version": "1.0.0",
     "scripts": {
+        "docker-compose:n8": "docker-compose -f n8docker-compose.yml up -d",
         "docker-compose:run": "docker-compose up -d --build",
         "build": "rimraf dist && tsc",
         "start": "rimraf dist && tsc && node dist/server.js",
